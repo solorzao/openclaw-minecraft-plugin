@@ -16,7 +16,8 @@
   "intervals": {
     "commandCheck": 750,
     "perception": 3000,
-    "autoSurvival": 5000
+    "autoSurvival": 5000,
+    "autonomousCheck": 10000
   },
   "survival": {
     "autoEat": true,
@@ -28,5 +29,40 @@
     "allowParkour": false,
     "canDig": true,
     "allowFreeMotion": false
+  },
+  "autonomous": {
+    "enabled": true,
+    "defaultGoal": "thriving_survivor",
+    "customGoal": null,
+    "checkIntervalMs": 10000,
+    "announceActions": true,
+    "helpNearbyPlayers": true,
+    "helpRadius": 20,
+    "goals": {
+      "thriving_survivor": {
+        "description": "Survive, build shelter, gather resources, explore, thrive",
+        "phases": ["survival", "home", "resources", "crafting", "exploration", "thriving"]
+      },
+      "peaceful_farmer": {
+        "description": "Focus on farming, animals, and peaceful living",
+        "phases": ["survival", "home", "farming", "animals", "thriving"]
+      },
+      "explorer": {
+        "description": "Map the world, find all biomes, document discoveries",
+        "phases": ["survival", "resources", "exploration", "documentation"]
+      },
+      "builder": {
+        "description": "Focus on building magnificent structures",
+        "phases": ["survival", "resources", "crafting", "building", "decoration"]
+      },
+      "wealthy_trader": {
+        "description": "Trade with villagers, accumulate emeralds",
+        "phases": ["survival", "resources", "trading", "wealth"]
+      },
+      "take_over_server": {
+        "description": "Resource dominance, PvP preparation, strategic expansion",
+        "phases": ["survival", "resources", "crafting", "fortification", "dominance"]
+      }
+    }
   }
 }

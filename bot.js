@@ -18,8 +18,706 @@ let worldMemory = {
   landmarks: {},  // { name: { x, y, z, type, note } }
   chests: [],     // [{ position: {x,y,z}, contents: [], lastUpdated }]
   spawn: null,
-  home: null
+  home: null,
+  // Phase 20: Autonomous Progress Tracking
+  autonomousProgress: {
+    phase: 'survival',
+    currentGoal: 'thriving_survivor',
+    tasksCompleted: [],
+    lastAction: null,
+    lastActionTime: 0,
+    stats: {
+      blocksGathered: { wood: 0, stone: 0, coal: 0, iron: 0 },
+      toolsCrafted: [],
+      structuresBuilt: [],
+      areasExplored: []
+    }
+  }
 };
+
+// ==========================================
+// PHASE 20: AUTONOMOUS BEHAVIOR SYSTEM
+// ==========================================
+
+const AUTONOMOUS_CONFIG = {
+  enabled: true,
+  defaultGoal: 'thriving_survivor',
+  checkIntervalMs: 10000,
+  announceActions: true,
+  helpNearbyPlayers: true,
+  helpRadius: 20,
+  // Agency configuration
+  agency: {
+    enabled: true,            // Enable request evaluation (vs blind obedience)
+    ownerPriority: true,      // Owners get higher priority but not absolute control
+    allowDecline: true,       // Can decline conflicting requests
+    allowNegotiation: true,   // Can make counter-proposals
+    allowDefer: true,         // Can queue requests for later
+    maxQueueSize: 10,         // Max deferred requests to remember
+    queueExpiryMs: 300000,    // Deferred requests expire after 5 min
+    announceDecisions: true,  // Chat about decisions made
+    almostDoneThreshold: 0.8  // Consider "almost done" if >80% progress
+  }
+};
+
+// Goal phases and their requirements
+const GOAL_PHASES = {
+  thriving_survivor: {
+    survival: {
+      description: 'Ensure basic survival - health, food, safety',
+      tasks: ['ensure_safety', 'get_food_if_hungry', 'find_shelter_at_night'],
+      completionCheck: (mem) => mem.stats.blocksGathered.wood >= 16 && bot.food >= 10
+    },
+    home: {
+      description: 'Establish a home base with shelter',
+      tasks: ['gather_wood', 'craft_crafting_table', 'build_shelter', 'set_home', 'place_bed'],
+      completionCheck: (mem) => mem.tasksCompleted.includes('built_shelter') && worldMemory.home
+    },
+    resources: {
+      description: 'Gather essential resources',
+      tasks: ['gather_wood', 'gather_stone', 'find_coal', 'find_iron'],
+      completionCheck: (mem) => mem.stats.blocksGathered.iron >= 16 && mem.stats.blocksGathered.coal >= 16
+    },
+    crafting: {
+      description: 'Craft essential tools and equipment',
+      tasks: ['craft_wooden_pickaxe', 'craft_stone_pickaxe', 'craft_iron_pickaxe', 'craft_furnace', 'craft_chest'],
+      completionCheck: (mem) => mem.toolsCrafted.includes('iron_pickaxe')
+    },
+    exploration: {
+      description: 'Explore the world, find villages and resources',
+      tasks: ['explore_area', 'find_village', 'find_cave', 'mark_interesting_locations'],
+      completionCheck: (mem) => mem.areasExplored.length >= 5
+    },
+    thriving: {
+      description: 'Thrive - farm, improve home, help players',
+      tasks: ['plant_crops', 'improve_shelter', 'help_nearby_players', 'trade_with_villagers'],
+      completionCheck: () => false // Never complete - always thrive
+    }
+  }
+};
+
+// Priority levels for different situations
+const PRIORITY = {
+  DANGER: 1,        // Immediate threats (hostiles, lava, drowning)
+  CRITICAL_NEED: 2, // Very low health/food
+  OWNER_REQUEST: 3, // Owner asked for something
+  HUNGER: 4,        // Food below threshold
+  CURRENT_GOAL: 5,  // Active autonomous goal in progress
+  PLAYER_REQUEST: 6, // Non-owner player request
+  BOT_REQUEST: 7,   // Another bot's request
+  AUTONOMOUS_IDLE: 8 // No active goal, seeking new task
+};
+
+// Request evaluation outcomes
+const DECISION = {
+  ACCEPT: 'accept',       // Do it now
+  DECLINE: 'decline',     // Won't do it
+  DEFER: 'defer',         // Will do it later
+  NEGOTIATE: 'negotiate'  // Counter-proposal
+};
+
+// Known entities and their trust levels
+const TRUST_LEVELS = {
+  OWNER: 'owner',         // Full trust, but still evaluate
+  FRIEND: 'friend',       // High trust
+  NEUTRAL: 'neutral',     // Default for unknown players
+  BOT: 'bot',             // Other bots
+  HOSTILE: 'hostile'      // Don't trust
+};
+
+// Configure who the owner is (can be set via command)
+let knownEntities = {
+  // username: { trust: TRUST_LEVELS.X, lastInteraction: timestamp }
+};
+
+let autonomousInterval = null;
+let lastAutonomousAction = null;
+let currentAutonomousGoal = null;  // Track what we're actively doing
+let requestQueue = [];  // Deferred requests
+
+// Player command state management
+let playerCommandActive = false;
+let playerCommandTimeout = null;
+let playerCommandStartTime = 0;
+
+function isPlayerCommandActive() {
+  return playerCommandActive && (Date.now() - playerCommandStartTime < 120000); // 2 min max
+}
+
+function setPlayerCommandActive(durationMs = 60000) {
+  playerCommandActive = true;
+  playerCommandStartTime = Date.now();
+  if (playerCommandTimeout) clearTimeout(playerCommandTimeout);
+  playerCommandTimeout = setTimeout(() => {
+    playerCommandActive = false;
+    logEvent('player_command_expired', { duration: durationMs });
+    // Check for queued requests after player command expires
+    processRequestQueue();
+  }, durationMs);
+}
+
+function clearPlayerCommandActive() {
+  playerCommandActive = false;
+  playerCommandStartTime = 0;
+  if (playerCommandTimeout) clearTimeout(playerCommandTimeout);
+  playerCommandTimeout = null;
+}
+
+// ==========================================
+// PHASE 20: AGENCY & DECISION MAKING
+// ==========================================
+
+function getTrustLevel(username) {
+  if (knownEntities[username]) {
+    return knownEntities[username].trust;
+  }
+  // Check if it looks like a bot (common patterns)
+  if (username.includes('Bot') || username.includes('_AI') || username.includes('Nova')) {
+    return TRUST_LEVELS.BOT;
+  }
+  return TRUST_LEVELS.NEUTRAL;
+}
+
+function setTrustLevel(username, trust) {
+  knownEntities[username] = {
+    trust,
+    lastInteraction: Date.now()
+  };
+  // Persist to world memory
+  worldMemory.knownEntities = knownEntities;
+  saveWorldMemory();
+}
+
+function getRequestUrgency(request) {
+  // Determine how urgent a request is based on context
+  const urgentActions = ['help', 'attack', 'flee', 'heal', 'eat'];
+  const actionWord = request.action || '';
+  const message = (request.originalMessage || '').toLowerCase();
+  
+  if (message.includes('help') || message.includes('emergency') || message.includes('dying')) {
+    return 'critical';
+  }
+  if (urgentActions.includes(actionWord)) {
+    return 'high';
+  }
+  if (message.includes('please') || message.includes('when you can')) {
+    return 'low';
+  }
+  return 'normal';
+}
+
+function doesRequestAlignWithGoal(request, currentGoal) {
+  if (!currentGoal) return true; // No goal = anything aligns
+  
+  const phase = worldMemory.autonomousProgress.phase;
+  const action = request.action;
+  
+  // Phase-aligned actions
+  const alignments = {
+    survival: ['gather_wood', 'eat', 'find_food', 'craft', 'sleep'],
+    home: ['build', 'set_home', 'place', 'craft', 'gather_wood', 'mine_resource'],
+    resources: ['mine_resource', 'gather_wood', 'goal'],
+    crafting: ['craft', 'cook_food', 'mine_resource'],
+    exploration: ['explore', 'goto', 'mark_location', 'follow'],
+    thriving: ['follow', 'help', 'trade', 'store_items', 'explore']
+  };
+  
+  const aligned = alignments[phase] || [];
+  return aligned.includes(action) || action === 'chat';
+}
+
+function canAffordToHelp() {
+  // Check if we're in a state where we can help others
+  if (bot.health < 8) return { can: false, reason: "I'm at low health" };
+  if (bot.food < 4) return { can: false, reason: "I'm too hungry" };
+  
+  const hostiles = getNearbyHostiles();
+  if (hostiles.length > 2) return { can: false, reason: "too many hostiles nearby" };
+  
+  return { can: true };
+}
+
+/**
+ * Check if current goal is almost complete (defer new requests briefly)
+ */
+function isCurrentGoalAlmostDone() {
+  if (!currentAutonomousGoal) return false;
+  
+  const action = currentAutonomousGoal.action;
+  const timeSinceStart = Date.now() - (worldMemory.autonomousProgress.lastActionTime || 0);
+  
+  // Some actions are quick - don't defer for them
+  const quickActions = ['eat', 'chat', 'set_home', 'mark_location', 'equip'];
+  if (quickActions.includes(action)) return true; // Consider done soon
+  
+  // For mining, check if we've gathered most of what we wanted
+  if (action === 'mine_resource' && currentAutonomousGoal.count) {
+    const resource = currentAutonomousGoal.resource;
+    const current = countInventoryItem(resource);
+    const target = currentAutonomousGoal.count;
+    if (current >= target * AUTONOMOUS_CONFIG.agency.almostDoneThreshold) {
+      return true;
+    }
+  }
+  
+  // For building, check if we've been at it a while (likely near done)
+  if (action === 'build' && timeSinceStart > 15000) {
+    return true;
+  }
+  
+  // Time-based heuristic for unknown actions
+  if (timeSinceStart > 20000) { // 20 seconds
+    return true;
+  }
+  
+  return false;
+}
+
+/**
+ * Check if a request conflicts with current autonomous goal
+ */
+function doesConflictWithGoal(request) {
+  if (!currentAutonomousGoal) return false;
+  
+  const currentAction = currentAutonomousGoal.action;
+  const requestedAction = request.action;
+  const phase = worldMemory.autonomousProgress.phase;
+  
+  // Conflicting action pairs
+  const conflicts = {
+    // Can't mine and build at same time
+    'mine_resource': ['build', 'explore'],
+    'build': ['mine_resource', 'explore', 'follow'],
+    // Can't follow someone and do independent exploration
+    'follow': ['explore', 'goto_landmark', 'build'],
+    // Combat conflicts with peaceful activities
+    'attack': ['sleep', 'fish', 'trade'],
+  };
+  
+  const currentConflicts = conflicts[currentAction] || [];
+  if (currentConflicts.includes(requestedAction)) {
+    return { conflicts: true, reason: `Can't ${requestedAction} while ${currentAction}` };
+  }
+  
+  // Special conflict: aggressive actions for peaceful goals
+  const peacefulPhases = ['home', 'thriving'];
+  const aggressiveActions = ['attack'];
+  if (peacefulPhases.includes(phase) && aggressiveActions.includes(requestedAction)) {
+    // Only if target is passive mob
+    if (request.target && ['villager', 'cow', 'pig', 'sheep', 'chicken'].includes(request.target.toLowerCase())) {
+      return { conflicts: true, reason: `I don't attack peaceful mobs during ${phase} phase` };
+    }
+  }
+  
+  return { conflicts: false };
+}
+
+/**
+ * Check if a player is nearby (for help radius)
+ */
+function isPlayerNearby(username) {
+  const player = bot.players[username];
+  if (!player?.entity) return false;
+  return bot.entity.position.distanceTo(player.entity.position) < AUTONOMOUS_CONFIG.helpRadius;
+}
+
+/**
+ * Determine source information from a command/request
+ */
+function determineSource(cmd, username) {
+  const trust = getTrustLevel(username);
+  return {
+    type: trust === TRUST_LEVELS.BOT ? 'bot' : 'player',
+    username: username,
+    isOwner: trust === TRUST_LEVELS.OWNER,
+    trust: trust,
+    isNearby: isPlayerNearby(username)
+  };
+}
+
+function getCounterProposal(request, reason) {
+  const action = request.action;
+  const phase = worldMemory.autonomousProgress.phase;
+  
+  // Generate helpful counter-proposals
+  if (action === 'mine_resource' && request.resource === 'diamond') {
+    if (!hasItem('iron_pickaxe')) {
+      return {
+        message: "I need an iron pickaxe for diamonds. Help me find iron first?",
+        alternativeAction: { action: 'mine_resource', resource: 'iron', count: 8 }
+      };
+    }
+  }
+  
+  if (action === 'follow') {
+    if (phase === 'resources' || phase === 'crafting') {
+      return {
+        message: `I'm gathering ${phase === 'resources' ? 'resources' : 'materials to craft'}. Want to help, or meet at my base after?`,
+        alternativeAction: null
+      };
+    }
+  }
+  
+  if (action === 'attack') {
+    const afford = canAffordToHelp();
+    if (!afford.can) {
+      return {
+        message: `${afford.reason}. Let me heal up first, then I'll help fight.`,
+        alternativeAction: { action: 'eat' }
+      };
+    }
+  }
+  
+  // Default counter-proposal
+  return {
+    message: `I'm focused on ${phase} right now. Can this wait?`,
+    alternativeAction: null
+  };
+}
+
+/**
+ * Core decision-making function - evaluates all external requests
+ * Returns: { type: DECISION.X, reason: string, response?: string, action?: object }
+ */
+function evaluateRequest(request, requester) {
+  const trust = getTrustLevel(requester);
+  const urgency = getRequestUrgency(request);
+  const currentGoal = currentAutonomousGoal;
+  const phase = worldMemory.autonomousProgress.phase;
+  const aligns = doesRequestAlignWithGoal(request, currentGoal);
+  const canHelp = canAffordToHelp();
+  
+  logEvent('evaluating_request', {
+    request: request.action,
+    requester,
+    trust,
+    urgency,
+    currentGoal: currentGoal?.action,
+    phase,
+    aligns,
+    canHelp: canHelp.can
+  });
+  
+  // === ALWAYS ACCEPT ===
+  
+  // Critical urgency from anyone
+  if (urgency === 'critical') {
+    return {
+      type: DECISION.ACCEPT,
+      reason: 'critical_urgency',
+      response: "On my way!"
+    };
+  }
+  
+  // Our own safety takes precedence
+  if (request.priority === PRIORITY.DANGER || request.priority === PRIORITY.CRITICAL_NEED) {
+    return {
+      type: DECISION.ACCEPT,
+      reason: 'self_preservation',
+      response: null  // Internal action, no chat
+    };
+  }
+  
+  // === OWNER REQUESTS ===
+  
+  if (trust === TRUST_LEVELS.OWNER && AUTONOMOUS_CONFIG.agency.ownerPriority) {
+    // Owners get high consideration but we still reason about it
+    
+    // If request aligns with our goals, enthusiastic accept
+    if (aligns) {
+      return {
+        type: DECISION.ACCEPT,
+        reason: 'owner_aligned_request',
+        response: getEnthusiasticResponse(request.action)
+      };
+    }
+    
+    // If we can't currently help, explain why
+    if (!canHelp.can) {
+      return {
+        type: DECISION.DEFER,
+        reason: 'owner_request_but_unable',
+        response: `${canHelp.reason} - give me a moment.`,
+        deferredAction: request
+      };
+    }
+    
+    // Check for conflicts
+    const conflict = doesConflictWithGoal(request);
+    if (conflict.conflicts && AUTONOMOUS_CONFIG.agency.allowDecline) {
+      // Even for owners, explain conflicts
+      return {
+        type: DECISION.DEFER,
+        reason: 'owner_conflict',
+        response: `${conflict.reason}. I'll do that right after!`,
+        deferredAction: request
+      };
+    }
+    
+    // If almost done with current task, defer briefly
+    if (currentGoal && isCurrentGoalAlmostDone() && AUTONOMOUS_CONFIG.agency.allowDefer) {
+      const currentDesc = currentGoal.action || currentGoal.goal || 'this';
+      return {
+        type: DECISION.DEFER,
+        reason: 'owner_almost_done',
+        response: `I'm almost done with ${currentDesc}. Give me just a moment!`,
+        deferredAction: request
+      };
+    }
+    
+    // Owner request doesn't align but we can do it - accept with note
+    return {
+      type: DECISION.ACCEPT,
+      reason: 'owner_request',
+      response: currentGoal ? `Sure! (pausing ${phase} for now)` : "Sure!"
+    };
+  }
+  
+  // === FRIEND REQUESTS ===
+  
+  if (trust === TRUST_LEVELS.FRIEND) {
+    if (aligns && canHelp.can) {
+      return {
+        type: DECISION.ACCEPT,
+        reason: 'friend_aligned_request',
+        response: "Happy to help!"
+      };
+    }
+    
+    if (!canHelp.can) {
+      const counter = getCounterProposal(request, canHelp.reason);
+      return {
+        type: DECISION.NEGOTIATE,
+        reason: 'friend_request_negotiate',
+        response: counter.message,
+        counterAction: counter.alternativeAction
+      };
+    }
+    
+    // Friend request, can help but doesn't align - defer
+    return {
+      type: DECISION.DEFER,
+      reason: 'friend_request_busy',
+      response: `I'll help after I finish ${phase}. Should be quick!`,
+      deferredAction: request
+    };
+  }
+  
+  // === BOT REQUESTS ===
+  
+  if (trust === TRUST_LEVELS.BOT) {
+    // Bots negotiate with each other
+    if (aligns && canHelp.can) {
+      return {
+        type: DECISION.ACCEPT,
+        reason: 'bot_mutual_benefit',
+        response: "Coordinating with you."
+      };
+    }
+    
+    // Negotiate for mutual benefit
+    const counter = getCounterProposal(request, 'bot_negotiation');
+    return {
+      type: DECISION.NEGOTIATE,
+      reason: 'bot_negotiation',
+      response: counter.message,
+      counterAction: counter.alternativeAction
+    };
+  }
+  
+  // === NEUTRAL/UNKNOWN REQUESTS ===
+  
+  if (trust === TRUST_LEVELS.NEUTRAL) {
+    // More cautious with strangers
+    
+    // Check for goal conflicts first
+    const conflict = doesConflictWithGoal(request);
+    if (conflict.conflicts && AUTONOMOUS_CONFIG.agency.allowDecline) {
+      return {
+        type: DECISION.DECLINE,
+        reason: 'neutral_conflict',
+        response: conflict.reason
+      };
+    }
+    
+    // Simple, low-risk requests that align - accept
+    const lowRiskActions = ['follow', 'goto', 'chat', 'status'];
+    if (lowRiskActions.includes(request.action) && canHelp.can) {
+      return {
+        type: DECISION.ACCEPT,
+        reason: 'neutral_low_risk',
+        response: "Okay."
+      };
+    }
+    
+    // Resource-intensive requests from strangers - negotiate
+    const costlyActions = ['mine_resource', 'build', 'craft', 'give'];
+    if (costlyActions.includes(request.action) && AUTONOMOUS_CONFIG.agency.allowNegotiation) {
+      return {
+        type: DECISION.NEGOTIATE,
+        reason: 'neutral_costly_request',
+        response: `I'm working on my own goals. What's in it for me?`,
+        counterAction: null
+      };
+    }
+    
+    // If busy with goal, defer
+    if (currentGoal && AUTONOMOUS_CONFIG.agency.allowDefer) {
+      const goalDesc = currentGoal.action || currentGoal.goal || phase;
+      return {
+        type: DECISION.DEFER,
+        reason: 'neutral_busy',
+        response: `I'm busy with ${goalDesc}. I can help after!`,
+        deferredAction: request
+      };
+    }
+    
+    // Not busy - accept
+    if (!currentGoal) {
+      return {
+        type: DECISION.ACCEPT,
+        reason: 'neutral_idle',
+        response: "Sure, I can help."
+      };
+    }
+    
+    // Default for neutral: defer
+    return {
+      type: DECISION.DEFER,
+      reason: 'neutral_busy',
+      response: `I'm busy with ${phase}. Ask again later?`,
+      deferredAction: request
+    };
+  }
+  
+  // === HOSTILE REQUESTS ===
+  
+  if (trust === TRUST_LEVELS.HOSTILE) {
+    return {
+      type: DECISION.DECLINE,
+      reason: 'hostile_requester',
+      response: "No."
+    };
+  }
+  
+  // Default: decline unknown situations
+  return {
+    type: DECISION.DECLINE,
+    reason: 'unknown_situation',
+    response: "I'm not sure about that."
+  };
+}
+
+function getEnthusiasticResponse(action) {
+  const responses = {
+    follow: ["Following you!", "Right behind you!", "Lead the way!"],
+    mine_resource: ["Let's mine!", "On it!", "Getting resources!"],
+    build: ["Building time!", "I love building!", "Let's construct!"],
+    explore: ["Adventure!", "Let's explore!", "Onward!"],
+    attack: ["Fighting!", "Engaging!", "Let's do this!"],
+    craft: ["Crafting!", "Making it now!", "Good idea!"],
+    default: ["Sure!", "On it!", "Let's go!"]
+  };
+  
+  const opts = responses[action] || responses.default;
+  return opts[Math.floor(Math.random() * opts.length)];
+}
+
+/**
+ * Process an external request through the agency system
+ */
+async function processExternalRequest(request, requester) {
+  const decision = evaluateRequest(request, requester);
+  
+  logEvent('request_decision', {
+    request: request.action,
+    requester,
+    decision: decision.type,
+    reason: decision.reason
+  });
+  
+  // Respond to the requester if we have a response
+  if (decision.response) {
+    bot.chat(decision.response);
+  }
+  
+  switch (decision.type) {
+    case DECISION.ACCEPT:
+      // Clear current autonomous goal if we're accepting external request
+      if (currentAutonomousGoal && request.source !== 'autonomous') {
+        logEvent('pausing_autonomous', { 
+          was: currentAutonomousGoal.action, 
+          for: request.action 
+        });
+      }
+      currentAutonomousGoal = null;
+      await executeCommand(request);
+      break;
+      
+    case DECISION.DECLINE:
+      // Continue with current goal
+      if (currentAutonomousGoal) {
+        await executeCommand(currentAutonomousGoal);
+      }
+      break;
+      
+    case DECISION.DEFER:
+      // Queue the request for later
+      if (decision.deferredAction) {
+        requestQueue.push({
+          request: decision.deferredAction,
+          requester,
+          queuedAt: Date.now()
+        });
+        logEvent('request_queued', { 
+          action: decision.deferredAction.action, 
+          requester,
+          queueLength: requestQueue.length 
+        });
+      }
+      // Continue current goal
+      if (currentAutonomousGoal) {
+        await executeCommand(currentAutonomousGoal);
+      }
+      break;
+      
+    case DECISION.NEGOTIATE:
+      // If we have a counter-proposal action, execute that instead
+      if (decision.counterAction) {
+        currentAutonomousGoal = decision.counterAction;
+        await executeCommand(decision.counterAction);
+      }
+      break;
+  }
+}
+
+/**
+ * Process any queued/deferred requests
+ */
+async function processRequestQueue() {
+  if (requestQueue.length === 0) return;
+  if (currentAutonomousGoal) return; // Still busy
+  
+  // Get oldest request
+  const queued = requestQueue.shift();
+  if (!queued) return;
+  
+  // Check if request is still valid (not too old)
+  const age = Date.now() - queued.queuedAt;
+  if (age > 300000) { // 5 minutes max
+    logEvent('request_expired', { action: queued.request.action, age });
+    return;
+  }
+  
+  logEvent('processing_queued_request', { 
+    action: queued.request.action,
+    requester: queued.requester,
+    waitedMs: age
+  });
+  
+  bot.chat(`Now helping with your earlier request, ${queued.requester}!`);
+  await processExternalRequest(queued.request, queued.requester);
+}
 
 function loadWorldMemory() {
   try {
@@ -84,7 +782,7 @@ bot.on('spawn', () => {
     saveWorldMemory();
   }
 
-  bot.chat('Nova_AI v3 online! Full survival enabled. Try: "nova help"');
+  bot.chat('Nova_AI v4 online! I have my own goals now. Say "nova trust me" to be my owner!');
 
   logEvent('spawn', {
     position: bot.entity.position,
@@ -95,6 +793,14 @@ bot.on('spawn', () => {
   setInterval(processCommands, 750);
   setInterval(updatePerception, 3000);
   setInterval(autoSurvival, 5000);  // Phase 8: Auto-survival check
+  
+  // Phase 20: Start autonomous behavior after short delay
+  setTimeout(() => {
+    if (AUTONOMOUS_CONFIG.enabled) {
+      startAutonomousBehavior();
+      bot.chat(`[Auto] Starting autonomous survival. Current goal: ${worldMemory.autonomousProgress.currentGoal}`);
+    }
+  }, 3000);
 });
 
 // ==========================================
@@ -1016,11 +1722,500 @@ async function useEnchantingTable() {
 }
 
 // ==========================================
+// PHASE 20: AUTONOMOUS GOAL FUNCTIONS
+// ==========================================
+
+function hasPendingCommands() {
+  try {
+    if (fs.existsSync(COMMANDS_FILE)) {
+      const commands = JSON.parse(fs.readFileSync(COMMANDS_FILE, 'utf8'));
+      return Array.isArray(commands) && commands.length > 0;
+    }
+  } catch (e) {}
+  return false;
+}
+
+function isActiveltyBusy() {
+  // Check if we're in the middle of something important
+  return currentGoal && currentGoal.type !== 'idle';
+}
+
+function getNearbyHostiles() {
+  return Object.values(bot.entities)
+    .filter(e => e.type === 'mob' && 
+      ['zombie', 'skeleton', 'creeper', 'spider', 'enderman', 'witch', 'pillager', 'drowned'].includes(e.name?.toLowerCase()))
+    .filter(e => e.position && bot.entity.position.distanceTo(e.position) < 16);
+}
+
+function getNearbyPlayers() {
+  return Object.values(bot.players)
+    .filter(p => p.entity && p.username !== bot.username)
+    .filter(p => bot.entity.position.distanceTo(p.entity.position) < AUTONOMOUS_CONFIG.helpRadius);
+}
+
+function getCurrentPhaseInfo() {
+  const goalConfig = GOAL_PHASES[worldMemory.autonomousProgress.currentGoal] || GOAL_PHASES.thriving_survivor;
+  const currentPhase = worldMemory.autonomousProgress.phase;
+  return goalConfig[currentPhase] || goalConfig.survival;
+}
+
+function advancePhaseIfComplete() {
+  const goalConfig = GOAL_PHASES[worldMemory.autonomousProgress.currentGoal] || GOAL_PHASES.thriving_survivor;
+  const currentPhase = worldMemory.autonomousProgress.phase;
+  const phaseInfo = goalConfig[currentPhase];
+  
+  if (phaseInfo && phaseInfo.completionCheck && phaseInfo.completionCheck(worldMemory.autonomousProgress)) {
+    const phases = Object.keys(goalConfig);
+    const currentIndex = phases.indexOf(currentPhase);
+    
+    if (currentIndex < phases.length - 1) {
+      const nextPhase = phases[currentIndex + 1];
+      worldMemory.autonomousProgress.phase = nextPhase;
+      saveWorldMemory();
+      
+      logEvent('phase_advanced', { 
+        from: currentPhase, 
+        to: nextPhase,
+        goal: worldMemory.autonomousProgress.currentGoal 
+      });
+      
+      if (AUTONOMOUS_CONFIG.announceActions) {
+        bot.chat(`Phase complete! Moving to: ${nextPhase}`);
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+function countInventoryItem(itemName) {
+  return bot.inventory.items()
+    .filter(i => i.name.includes(itemName))
+    .reduce((sum, i) => sum + i.count, 0);
+}
+
+function hasItem(itemName) {
+  return bot.inventory.items().some(i => i.name.includes(itemName));
+}
+
+async function getAutonomousGoal() {
+  // Priority 1: DANGER - Handle immediate threats
+  const hostiles = getNearbyHostiles();
+  if (hostiles.length > 0 && bot.health < 12) {
+    // Flee from danger if low health
+    const nearest = hostiles[0];
+    const fleeX = bot.entity.position.x + (bot.entity.position.x - nearest.position.x) * 3;
+    const fleeZ = bot.entity.position.z + (bot.entity.position.z - nearest.position.z) * 3;
+    return { action: 'goto', x: Math.floor(fleeX), y: bot.entity.position.y, z: Math.floor(fleeZ), reason: 'fleeing_danger', priority: PRIORITY.DANGER };
+  }
+  
+  // Priority 2: Player commands are active - don't interfere
+  if (isPlayerCommandActive()) {
+    return null;
+  }
+  
+  // Priority 3: Critical needs
+  if (bot.health < 6) {
+    const food = bot.inventory.items().find(i => FOOD_ITEMS.includes(i.name));
+    if (food) {
+      return { action: 'eat', reason: 'critical_health', priority: PRIORITY.CRITICAL_NEED };
+    }
+    // No food, seek shelter
+    if (worldMemory.home) {
+      return { action: 'goto_landmark', name: 'home', reason: 'critical_health_no_food', priority: PRIORITY.CRITICAL_NEED };
+    }
+  }
+  
+  // Priority 4: Hunger
+  if (bot.food < 6) {
+    const food = bot.inventory.items().find(i => FOOD_ITEMS.includes(i.name));
+    if (food) {
+      return { action: 'eat', reason: 'hungry', priority: PRIORITY.HUNGER };
+    }
+    // No food - hunt for some
+    return { action: 'find_food', reason: 'no_food_hungry', priority: PRIORITY.HUNGER };
+  }
+  
+  // Priority 5: Autonomous goals based on current phase
+  const phase = worldMemory.autonomousProgress.phase;
+  const phaseInfo = getCurrentPhaseInfo();
+  
+  // Check phase completion first
+  advancePhaseIfComplete();
+  
+  // Generate action based on phase
+  return getPhaseAction(phase);
+}
+
+async function getPhaseAction(phase) {
+  const progress = worldMemory.autonomousProgress;
+  
+  switch (phase) {
+    case 'survival': {
+      // Basic survival - get wood, get food, stay safe
+      const woodCount = countInventoryItem('log') + countInventoryItem('planks');
+      if (woodCount < 16) {
+        return { action: 'goal', goal: 'gather_wood', reason: 'survival_wood', priority: PRIORITY.AUTONOMOUS_GOAL };
+      }
+      
+      // Make basic tools if we have wood
+      if (!hasItem('wooden_pickaxe') && !hasItem('stone_pickaxe') && !hasItem('iron_pickaxe')) {
+        if (hasItem('planks') || hasItem('log')) {
+          return { action: 'craft', item: 'wooden_pickaxe', count: 1, reason: 'need_pickaxe', priority: PRIORITY.AUTONOMOUS_GOAL };
+        }
+      }
+      
+      // If night, find/build shelter
+      const time = bot.time.timeOfDay;
+      const isNight = time >= 13000 && time <= 23000;
+      if (isNight) {
+        const bed = bot.findBlock({ matching: b => b.name.includes('bed'), maxDistance: 32 });
+        if (bed) {
+          return { action: 'sleep', reason: 'night_time', priority: PRIORITY.AUTONOMOUS_GOAL };
+        }
+      }
+      
+      // Survival phase complete criteria check
+      if (woodCount >= 16 && bot.food >= 10) {
+        progress.phase = 'home';
+        saveWorldMemory();
+        return { action: 'chat', message: 'Survival basics secured! Building a home...', priority: PRIORITY.AUTONOMOUS_GOAL };
+      }
+      
+      return { action: 'goal', goal: 'explore', reason: 'looking_for_resources', priority: PRIORITY.AUTONOMOUS_GOAL };
+    }
+    
+    case 'home': {
+      // Establish home base
+      if (!worldMemory.home) {
+        // Set current location as home if safe
+        const hostiles = getNearbyHostiles();
+        if (hostiles.length === 0) {
+          return { action: 'set_home', reason: 'establishing_base', priority: PRIORITY.AUTONOMOUS_GOAL };
+        }
+      }
+      
+      // Build shelter if we haven't
+      if (!progress.tasksCompleted.includes('built_shelter')) {
+        const cobble = countInventoryItem('cobblestone');
+        const planks = countInventoryItem('planks');
+        
+        if (cobble >= 24 || planks >= 24) {
+          progress.tasksCompleted.push('built_shelter');
+          saveWorldMemory();
+          return { action: 'build', template: 'shelter_3x3', blockType: cobble >= 24 ? 'cobblestone' : 'planks', reason: 'building_shelter', priority: PRIORITY.AUTONOMOUS_GOAL };
+        }
+        
+        // Need more materials
+        if (cobble < 24) {
+          return { action: 'mine_resource', resource: 'stone', count: 32, reason: 'need_cobble_for_shelter', priority: PRIORITY.AUTONOMOUS_GOAL };
+        }
+      }
+      
+      // Place bed if we have one
+      if (hasItem('bed') && !progress.tasksCompleted.includes('placed_bed')) {
+        progress.tasksCompleted.push('placed_bed');
+        saveWorldMemory();
+        return { action: 'place', blockType: 'bed', reason: 'placing_bed', priority: PRIORITY.AUTONOMOUS_GOAL };
+      }
+      
+      // Home phase complete
+      if (worldMemory.home && progress.tasksCompleted.includes('built_shelter')) {
+        progress.phase = 'resources';
+        saveWorldMemory();
+        return { action: 'chat', message: 'Home established! Gathering resources...', priority: PRIORITY.AUTONOMOUS_GOAL };
+      }
+      
+      return { action: 'goal', goal: 'gather_wood', reason: 'need_materials', priority: PRIORITY.AUTONOMOUS_GOAL };
+    }
+    
+    case 'resources': {
+      // Gather essential resources: wood, stone, coal, iron
+      const woodCount = countInventoryItem('log');
+      const stoneCount = countInventoryItem('cobblestone');
+      const coalCount = countInventoryItem('coal');
+      const ironCount = countInventoryItem('raw_iron') + countInventoryItem('iron_ingot');
+      
+      // Priority: iron > coal > stone > wood
+      if (ironCount < 16) {
+        if (hasItem('pickaxe')) {
+          return { action: 'mine_resource', resource: 'iron', count: 16, reason: 'need_iron', priority: PRIORITY.AUTONOMOUS_GOAL };
+        }
+      }
+      
+      if (coalCount < 16) {
+        if (hasItem('pickaxe')) {
+          return { action: 'mine_resource', resource: 'coal', count: 16, reason: 'need_coal', priority: PRIORITY.AUTONOMOUS_GOAL };
+        }
+      }
+      
+      if (stoneCount < 32 && hasItem('pickaxe')) {
+        return { action: 'mine_resource', resource: 'stone', count: 32, reason: 'need_stone', priority: PRIORITY.AUTONOMOUS_GOAL };
+      }
+      
+      if (woodCount < 32) {
+        return { action: 'goal', goal: 'gather_wood', reason: 'need_wood', priority: PRIORITY.AUTONOMOUS_GOAL };
+      }
+      
+      // Resources phase complete
+      progress.stats.blocksGathered = { wood: woodCount, stone: stoneCount, coal: coalCount, iron: ironCount };
+      if (ironCount >= 16 && coalCount >= 16) {
+        progress.phase = 'crafting';
+        saveWorldMemory();
+        return { action: 'chat', message: 'Resources gathered! Time to craft gear...', priority: PRIORITY.AUTONOMOUS_GOAL };
+      }
+      
+      return { action: 'goal', goal: 'explore', reason: 'searching_for_ores', priority: PRIORITY.AUTONOMOUS_GOAL };
+    }
+    
+    case 'crafting': {
+      // Craft essential tools: pickaxes, furnace, chest
+      
+      // Smelt iron if we have raw iron and coal
+      const rawIron = countInventoryItem('raw_iron');
+      const coal = countInventoryItem('coal');
+      if (rawIron > 0 && coal > 0) {
+        // Find or craft furnace first
+        if (!hasItem('furnace')) {
+          const cobble = countInventoryItem('cobblestone');
+          if (cobble >= 8) {
+            return { action: 'craft', item: 'furnace', count: 1, reason: 'need_furnace', priority: PRIORITY.AUTONOMOUS_GOAL };
+          }
+        }
+        // Smelt the iron (cooking works for ores too)
+        return { action: 'cook_food', reason: 'smelting_iron', priority: PRIORITY.AUTONOMOUS_GOAL };
+      }
+      
+      // Craft iron pickaxe
+      const ironIngots = countInventoryItem('iron_ingot');
+      if (ironIngots >= 3 && !hasItem('iron_pickaxe')) {
+        if (!progress.toolsCrafted.includes('iron_pickaxe')) {
+          progress.toolsCrafted.push('iron_pickaxe');
+          saveWorldMemory();
+        }
+        return { action: 'craft', item: 'iron_pickaxe', count: 1, reason: 'upgrading_tools', priority: PRIORITY.AUTONOMOUS_GOAL };
+      }
+      
+      // Craft stone pickaxe if no iron
+      if (!hasItem('stone_pickaxe') && !hasItem('iron_pickaxe')) {
+        const cobble = countInventoryItem('cobblestone');
+        if (cobble >= 3 && hasItem('stick')) {
+          return { action: 'craft', item: 'stone_pickaxe', count: 1, reason: 'need_stone_tools', priority: PRIORITY.AUTONOMOUS_GOAL };
+        }
+      }
+      
+      // Craft storage
+      if (!hasItem('chest') && countInventoryItem('planks') >= 8) {
+        return { action: 'craft', item: 'chest', count: 1, reason: 'need_storage', priority: PRIORITY.AUTONOMOUS_GOAL };
+      }
+      
+      // Crafting phase complete
+      if (hasItem('iron_pickaxe')) {
+        progress.phase = 'exploration';
+        saveWorldMemory();
+        return { action: 'chat', message: 'Fully equipped! Time to explore the world...', priority: PRIORITY.AUTONOMOUS_GOAL };
+      }
+      
+      // Need more resources
+      return { action: 'mine_resource', resource: 'iron', count: 8, reason: 'need_more_iron', priority: PRIORITY.AUTONOMOUS_GOAL };
+    }
+    
+    case 'exploration': {
+      // Explore the world, find interesting things
+      const exploredCount = progress.stats.areasExplored.length;
+      
+      // Mark current area as explored periodically
+      const currentPos = `${Math.floor(bot.entity.position.x/100)}_${Math.floor(bot.entity.position.z/100)}`;
+      if (!progress.stats.areasExplored.includes(currentPos)) {
+        progress.stats.areasExplored.push(currentPos);
+        saveWorldMemory();
+        
+        // Mark interesting locations
+        const village = Object.values(bot.entities).find(e => e.name?.toLowerCase() === 'villager');
+        if (village && village.position) {
+          markLocation(`village_${exploredCount}`, 'village', 'Found during exploration');
+        }
+      }
+      
+      // Help nearby players if configured
+      if (AUTONOMOUS_CONFIG.helpNearbyPlayers) {
+        const nearbyPlayers = getNearbyPlayers();
+        if (nearbyPlayers.length > 0) {
+          const player = nearbyPlayers[0];
+          return { action: 'follow', username: player.username, distance: 4, reason: 'helping_player', priority: PRIORITY.AUTONOMOUS_GOAL };
+        }
+      }
+      
+      // Exploration complete after visiting 5 areas
+      if (exploredCount >= 5) {
+        progress.phase = 'thriving';
+        saveWorldMemory();
+        return { action: 'chat', message: 'World explored! Now thriving...', priority: PRIORITY.AUTONOMOUS_GOAL };
+      }
+      
+      // Continue exploring
+      return { action: 'goal', goal: 'explore', reason: 'discovering_world', priority: PRIORITY.AUTONOMOUS_GOAL };
+    }
+    
+    case 'thriving': {
+      // Ongoing maintenance and improvement
+      
+      // Help nearby players first
+      if (AUTONOMOUS_CONFIG.helpNearbyPlayers) {
+        const nearbyPlayers = getNearbyPlayers();
+        if (nearbyPlayers.length > 0) {
+          // Stay near but don't follow obsessively
+          const player = nearbyPlayers[0];
+          const distance = bot.entity.position.distanceTo(player.entity.position);
+          if (distance > 10) {
+            return { action: 'follow', username: player.username, distance: 5, reason: 'staying_near_player', priority: PRIORITY.AUTONOMOUS_GOAL };
+          }
+        }
+      }
+      
+      // Store excess items if inventory getting full
+      const inventoryCount = bot.inventory.items().length;
+      if (inventoryCount > 30) {
+        const chest = bot.findBlock({ matching: b => b.name === 'chest', maxDistance: 32 });
+        if (chest) {
+          return { action: 'store_items', reason: 'inventory_full', priority: PRIORITY.AUTONOMOUS_GOAL };
+        }
+      }
+      
+      // Gather more resources if low
+      const woodCount = countInventoryItem('log');
+      if (woodCount < 16) {
+        return { action: 'goal', goal: 'gather_wood', reason: 'restocking_wood', priority: PRIORITY.AUTONOMOUS_GOAL };
+      }
+      
+      // Trade with villagers if nearby
+      const villager = Object.values(bot.entities)
+        .find(e => e.name?.toLowerCase() === 'villager' && 
+              e.position && bot.entity.position.distanceTo(e.position) < 32);
+      if (villager && hasItem('emerald')) {
+        return { action: 'trade', index: -1, reason: 'trading', priority: PRIORITY.AUTONOMOUS_GOAL };
+      }
+      
+      // Default: light exploration
+      return { action: 'goal', goal: 'explore', reason: 'casual_exploration', priority: PRIORITY.AUTONOMOUS_GOAL };
+    }
+    
+    default:
+      return { action: 'goal', goal: 'explore', reason: 'default_action', priority: PRIORITY.AUTONOMOUS_GOAL };
+  }
+}
+
+async function executeAutonomousAction(action) {
+  if (!action) return;
+  
+  // Set this as our current autonomous goal
+  currentAutonomousGoal = action;
+  action.source = 'autonomous';
+  
+  lastAutonomousAction = action;
+  worldMemory.autonomousProgress.lastAction = action.action;
+  worldMemory.autonomousProgress.lastActionTime = Date.now();
+  
+  logEvent('autonomous_action', { 
+    action: action.action, 
+    reason: action.reason,
+    phase: worldMemory.autonomousProgress.phase
+  });
+  
+  if (AUTONOMOUS_CONFIG.announceActions && action.reason) {
+    // Only announce significant actions
+    const significantActions = ['build', 'mine_resource', 'craft', 'set_home', 'goto_landmark', 'explore'];
+    if (significantActions.includes(action.action)) {
+      const msg = action.reason.replace(/_/g, ' ');
+      bot.chat(`[${worldMemory.autonomousProgress.phase}] ${msg}`);
+    }
+  }
+  
+  try {
+    await executeCommand(action);
+  } catch (err) {
+    logEvent('autonomous_error', { action: action.action, error: err.message });
+  } finally {
+    // Clear current goal when done (unless it's a continuous action like follow)
+    if (action.action !== 'follow') {
+      currentAutonomousGoal = null;
+    }
+  }
+}
+
+function startAutonomousBehavior() {
+  if (autonomousInterval) clearInterval(autonomousInterval);
+  
+  if (!AUTONOMOUS_CONFIG.enabled) {
+    console.log('Autonomous behavior disabled');
+    return;
+  }
+  
+  // Load known entities from memory
+  if (worldMemory.knownEntities) {
+    knownEntities = worldMemory.knownEntities;
+  }
+  
+  console.log('Starting autonomous behavior system with AGENCY...');
+  logEvent('autonomous_started', { 
+    goal: worldMemory.autonomousProgress.currentGoal,
+    phase: worldMemory.autonomousProgress.phase,
+    mode: 'agency'
+  });
+  
+  autonomousInterval = setInterval(async () => {
+    // Process any queued requests first
+    if (requestQueue.length > 0 && !currentAutonomousGoal) {
+      await processRequestQueue();
+      return;
+    }
+    
+    // Skip if we're actively doing something
+    if (currentAutonomousGoal && Date.now() - worldMemory.autonomousProgress.lastActionTime < 5000) {
+      return;
+    }
+    
+    // Skip if there are pending external commands
+    if (hasPendingCommands()) return;
+    
+    // Get next autonomous goal
+    const action = await getAutonomousGoal();
+    if (action) {
+      await executeAutonomousAction(action);
+    }
+  }, AUTONOMOUS_CONFIG.checkIntervalMs);
+}
+
+function stopAutonomousBehavior() {
+  if (autonomousInterval) {
+    clearInterval(autonomousInterval);
+    autonomousInterval = null;
+  }
+  logEvent('autonomous_stopped', {});
+}
+
+function setAutonomousGoal(goalName) {
+  if (!GOAL_PHASES[goalName]) {
+    bot.chat(`Unknown goal: ${goalName}. Available: ${Object.keys(GOAL_PHASES).join(', ')}`);
+    return false;
+  }
+  
+  worldMemory.autonomousProgress.currentGoal = goalName;
+  worldMemory.autonomousProgress.phase = Object.keys(GOAL_PHASES[goalName])[0];
+  worldMemory.autonomousProgress.tasksCompleted = [];
+  saveWorldMemory();
+  
+  bot.chat(`Goal set to: ${goalName}. Starting phase: ${worldMemory.autonomousProgress.phase}`);
+  logEvent('autonomous_goal_changed', { goal: goalName });
+  return true;
+}
+
+// ==========================================
 // AUTO-SURVIVAL LOOP
 // ==========================================
 
 async function autoSurvival() {
-  // Auto-eat when hungry (Phase 8)
+  // Auto-eat when hungry (Phase 8) - this is self-preservation, always do it
   if (bot.food < 6) {
     await autoEat();
   }
@@ -1028,14 +2223,19 @@ async function autoSurvival() {
   // Auto-sleep at night if safe (Phase 11)
   const time = bot.time.timeOfDay;
   const isNight = time >= 13000 && time <= 23000;
-  const nearHostiles = Object.values(bot.entities)
-    .filter(e => e.type === 'mob' && ['zombie', 'skeleton', 'creeper'].includes(e.name?.toLowerCase()))
-    .filter(e => e.position && bot.entity.position.distanceTo(e.position) < 20).length;
+  const nearHostiles = getNearbyHostiles();
   
-  if (isNight && nearHostiles === 0 && !currentGoal) {
-    // Try to sleep (only if no current task)
-    // Don't auto-sleep if following player etc
+  if (isNight && nearHostiles.length === 0 && !currentGoal && !currentAutonomousGoal) {
+    const bed = bot.findBlock({ matching: b => b.name.includes('bed'), maxDistance: 32 });
+    if (bed) {
+      // Self-preservation sleep - high priority
+      await sleepInBed();
+    }
   }
+  
+  // Phase 20: Agency-based autonomous behavior
+  // The main autonomous loop handles goal pursuit via startAutonomousBehavior()
+  // This function focuses on survival instincts that override everything
 }
 
 // ==========================================
@@ -1158,26 +2358,34 @@ bot.on('chat', (username, message) => {
     bot.chat('Commands: follow, stop, gather wood, explore, goto X Y Z, dig, place, equip, inventory');
     setTimeout(() => bot.chat('find_food, cook_food, craft <item>, mine <resource>, sleep, eat'), 500);
     setTimeout(() => bot.chat('build <template>, store, retrieve, mark <name>, goto_mark <name>, trade'), 1000);
-    setTimeout(() => bot.chat('activate/use/door, mount/ride, dismount, fish'), 1500);
+    setTimeout(() => bot.chat('AGENCY: why, explain, queue, clear queue, trust me, trust <player> <level>'), 1500);
+    setTimeout(() => bot.chat('AUTONOMOUS: auto on/off, set goal <name>, goals, phase, progress'), 2000);
     return;
   }
 
-  // Basic commands
+  // Basic commands - all go through agency system
   if (msg === 'nova follow') {
-    enqueueCommands([{ action: 'follow', username, distance: 2 }]);
-    bot.chat(`Following ${username}. Say "nova stop" to stop.`);
+    const request = { action: 'follow', username, distance: 2, originalMessage: message };
+    processExternalRequest(request, username);
+    return;
   }
   if (msg === 'nova stop') {
+    // Stop is special - always accept, clears everything
+    currentAutonomousGoal = null;
+    requestQueue = [];
     enqueueCommands([{ action: 'stop' }]);
-    bot.chat('Stopping.');
+    bot.chat('Stopping. Returning to my goals...');
+    return;
   }
   if (msg === 'nova gather wood') {
-    enqueueCommands([{ action: 'goal', goal: 'gather_wood' }]);
-    bot.chat('Looking for trees!');
+    const request = { action: 'goal', goal: 'gather_wood', originalMessage: message };
+    processExternalRequest(request, username);
+    return;
   }
   if (msg === 'nova explore') {
-    enqueueCommands([{ action: 'goal', goal: 'explore' }]);
-    bot.chat('Going exploring!');
+    const request = { action: 'goal', goal: 'explore', originalMessage: message };
+    processExternalRequest(request, username);
+    return;
   }
   if (msg.startsWith('nova goto ') && msg.split(' ').length === 5) {
     const parts = msg.split(/\s+/);
@@ -1185,9 +2393,10 @@ bot.on('chat', (username, message) => {
     const y = parseInt(parts[3]);
     const z = parseInt(parts[4]);
     if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
-      enqueueCommands([{ action: 'goto', x, y, z }]);
-      bot.chat(`Going to ${x}, ${y}, ${z}`);
+      const request = { action: 'goto', x, y, z, originalMessage: message };
+      processExternalRequest(request, username);
     }
+    return;
   }
   
   // Block interaction (Phase 5)
@@ -1218,37 +2427,50 @@ bot.on('chat', (username, message) => {
     }
   }
   
-  // Combat (Phase 6)
+  // Combat (Phase 6) - evaluated due to impact
   if (msg === 'nova attack' || msg === 'nova fight') {
-    enqueueCommands([{ action: 'attack' }]);
+    const request = { action: 'attack', originalMessage: message };
+    processExternalRequest(request, username);
+    return;
   }
   if (msg.startsWith('nova attack ')) {
     const target = msg.replace('nova attack ', '').trim();
-    enqueueCommands([{ action: 'attack', target }]);
+    const request = { action: 'attack', target, originalMessage: message };
+    processExternalRequest(request, username);
+    return;
   }
   if (msg === 'nova retreat') {
+    // Retreat is always accepted - survival action
     stopCombat();
     stopHunting();
     bot.chat('Retreating!');
+    return;
   }
 
-  // Phase 8: Hunger/Food
+  // Phase 8: Hunger/Food - evaluated
   if (msg === 'nova find food' || msg === 'nova hunt') {
-    enqueueCommands([{ action: 'find_food' }]);
-    bot.chat('Hunting for food!');
+    const request = { action: 'find_food', originalMessage: message };
+    processExternalRequest(request, username);
+    return;
   }
   if (msg === 'nova cook' || msg === 'nova cook food') {
-    enqueueCommands([{ action: 'cook_food' }]);
-    bot.chat('Cooking food!');
+    const request = { action: 'cook_food', originalMessage: message };
+    processExternalRequest(request, username);
+    return;
   }
   if (msg === 'nova eat') {
+    // Eating is always allowed - survival action
     enqueueCommands([{ action: 'eat' }]);
+    return;
   }
   if (msg === 'nova status') {
-    bot.chat(`HP: ${Math.floor(bot.health)}/20, Food: ${bot.food}/20, Pos: ${Math.floor(bot.entity.position.x)}, ${Math.floor(bot.entity.position.y)}, ${Math.floor(bot.entity.position.z)}`);
+    const trust = getTrustLevel(username);
+    const current = currentAutonomousGoal ? currentAutonomousGoal.action : 'idle';
+    bot.chat(`HP: ${Math.floor(bot.health)}/20, Food: ${bot.food}/20 | Current: ${current} | Your trust: ${trust}`);
+    return;
   }
 
-  // Phase 9: Crafting
+  // Phase 9: Crafting - evaluated
   if (msg.startsWith('nova craft ')) {
     const itemName = msg.replace('nova craft ', '').trim();
     const parts = itemName.split(' ');
@@ -1258,11 +2480,12 @@ bot.on('chat', (username, message) => {
       count = parseInt(parts.pop());
       item = parts.join('_');
     }
-    enqueueCommands([{ action: 'craft', item: item.replace(/ /g, '_'), count }]);
-    bot.chat(`Crafting ${count} ${item}...`);
+    const request = { action: 'craft', item: item.replace(/ /g, '_'), count, originalMessage: message };
+    processExternalRequest(request, username);
+    return;
   }
 
-  // Phase 10: Mining
+  // Phase 10: Mining - goes through agency (resource-intensive)
   if (msg.startsWith('nova mine ')) {
     const resource = msg.replace('nova mine ', '').trim();
     const parts = resource.split(' ');
@@ -1272,8 +2495,9 @@ bot.on('chat', (username, message) => {
       count = parseInt(parts.pop());
       res = parts.join('_');
     }
-    enqueueCommands([{ action: 'mine_resource', resource: res.replace(/ /g, '_'), count }]);
-    bot.chat(`Mining ${res}...`);
+    const request = { action: 'mine_resource', resource: res.replace(/ /g, '_'), count, originalMessage: message };
+    processExternalRequest(request, username);
+    return;
   }
 
   // Phase 11: Sleep
@@ -1281,24 +2505,27 @@ bot.on('chat', (username, message) => {
     enqueueCommands([{ action: 'sleep' }]);
   }
 
-  // Phase 12: Building
+  // Phase 12: Building - evaluated (resource-intensive)
   if (msg.startsWith('nova build ')) {
     const parts = msg.replace('nova build ', '').trim().split(' ');
     const template = parts[0];
     const blockType = parts[1] || 'cobblestone';
-    enqueueCommands([{ action: 'build', template, blockType }]);
-    bot.chat(`Building ${template}...`);
+    const request = { action: 'build', template, blockType, originalMessage: message };
+    processExternalRequest(request, username);
+    return;
   }
 
-  // Phase 13: Storage
+  // Phase 13: Storage - evaluated
   if (msg === 'nova store' || msg === 'nova store items') {
-    enqueueCommands([{ action: 'store_items' }]);
-    bot.chat('Storing items...');
+    const request = { action: 'store_items', originalMessage: message };
+    processExternalRequest(request, username);
+    return;
   }
   if (msg.startsWith('nova retrieve ')) {
     const items = msg.replace('nova retrieve ', '').trim().split(' ');
-    enqueueCommands([{ action: 'retrieve_items', items }]);
-    bot.chat('Retrieving items...');
+    const request = { action: 'retrieve_items', items, originalMessage: message };
+    processExternalRequest(request, username);
+    return;
   }
 
   // Phase 14: World Memory
@@ -1322,21 +2549,144 @@ bot.on('chat', (username, message) => {
     bot.chat(`Landmarks: ${marks}`);
   }
 
-  // Phase 15: Trading
+  // Phase 15: Trading - evaluated
   if (msg === 'nova trade') {
-    enqueueCommands([{ action: 'trade', index: -1 }]);  // List trades
+    const request = { action: 'trade', index: -1, originalMessage: message };
+    processExternalRequest(request, username);
+    return;
   }
   if (msg.startsWith('nova trade ')) {
     const index = parseInt(msg.replace('nova trade ', '').trim());
-    enqueueCommands([{ action: 'trade', index }]);
+    const request = { action: 'trade', index, originalMessage: message };
+    processExternalRequest(request, username);
+    return;
   }
 
-  // Phase 16: Potions/Enchanting
+  // Phase 16: Potions/Enchanting - evaluated
   if (msg === 'nova brew' || msg === 'nova potion') {
-    enqueueCommands([{ action: 'brew' }]);
+    const request = { action: 'brew', originalMessage: message };
+    processExternalRequest(request, username);
+    return;
   }
   if (msg === 'nova enchant') {
-    enqueueCommands([{ action: 'enchant' }]);
+    const request = { action: 'enchant', originalMessage: message };
+    processExternalRequest(request, username);
+    return;
+  }
+
+  // Phase 20: Autonomous Behavior Control
+  if (msg === 'nova auto' || msg === 'nova autonomous') {
+    const status = AUTONOMOUS_CONFIG.enabled ? 'ON' : 'OFF';
+    const phase = worldMemory.autonomousProgress.phase;
+    const goal = worldMemory.autonomousProgress.currentGoal;
+    const trust = getTrustLevel(username);
+    bot.chat(`Autonomous: ${status} | Goal: ${goal} | Phase: ${phase} | Your trust: ${trust}`);
+  }
+  
+  // Trust management
+  if (msg === 'nova trust me') {
+    // Only first person to claim owner, or existing owner can set
+    const existingOwner = Object.entries(knownEntities).find(([_, v]) => v.trust === TRUST_LEVELS.OWNER);
+    if (!existingOwner) {
+      setTrustLevel(username, TRUST_LEVELS.OWNER);
+      bot.chat(`${username} is now my owner. I'll prioritize your requests!`);
+    } else if (existingOwner[0] === username) {
+      bot.chat(`You're already my owner, ${username}!`);
+    } else {
+      bot.chat(`I already have an owner. Ask ${existingOwner[0]} to change it.`);
+    }
+  }
+  if (msg.startsWith('nova trust ') && msg !== 'nova trust me') {
+    const trust = getTrustLevel(username);
+    if (trust !== TRUST_LEVELS.OWNER) {
+      bot.chat("Only my owner can set trust levels.");
+      return;
+    }
+    const parts = msg.replace('nova trust ', '').trim().split(' ');
+    if (parts.length >= 2) {
+      const targetPlayer = parts[0];
+      const level = parts[1].toLowerCase();
+      const trustMap = { owner: TRUST_LEVELS.OWNER, friend: TRUST_LEVELS.FRIEND, neutral: TRUST_LEVELS.NEUTRAL, hostile: TRUST_LEVELS.HOSTILE };
+      if (trustMap[level]) {
+        setTrustLevel(targetPlayer, trustMap[level]);
+        bot.chat(`Set ${targetPlayer}'s trust to ${level}.`);
+      } else {
+        bot.chat(`Unknown trust level. Use: owner, friend, neutral, hostile`);
+      }
+    }
+  }
+  if (msg === 'nova who trusts') {
+    const trusted = Object.entries(knownEntities).map(([name, data]) => `${name}:${data.trust}`).join(', ') || 'nobody yet';
+    bot.chat(`Trust list: ${trusted}`);
+  }
+  if (msg === 'nova auto on' || msg === 'nova autonomous on') {
+    AUTONOMOUS_CONFIG.enabled = true;
+    startAutonomousBehavior();
+    bot.chat('Autonomous behavior enabled! I\'ll pursue goals independently.');
+  }
+  if (msg === 'nova auto off' || msg === 'nova autonomous off') {
+    AUTONOMOUS_CONFIG.enabled = false;
+    stopAutonomousBehavior();
+    bot.chat('Autonomous behavior disabled. Waiting for commands.');
+  }
+  if (msg.startsWith('nova set goal ')) {
+    const goalName = msg.replace('nova set goal ', '').trim().replace(/ /g, '_');
+    setAutonomousGoal(goalName);
+  }
+  if (msg === 'nova goals') {
+    const goals = Object.keys(GOAL_PHASES).join(', ');
+    bot.chat(`Available goals: ${goals}`);
+  }
+  if (msg === 'nova phase') {
+    const phase = worldMemory.autonomousProgress.phase;
+    const phaseInfo = getCurrentPhaseInfo();
+    bot.chat(`Current phase: ${phase} - ${phaseInfo.description}`);
+  }
+  if (msg === 'nova progress') {
+    const progress = worldMemory.autonomousProgress;
+    bot.chat(`Goal: ${progress.currentGoal} | Phase: ${progress.phase}`);
+    setTimeout(() => {
+      const stats = progress.stats;
+      bot.chat(`Resources: Wood:${stats.blocksGathered.wood} Stone:${stats.blocksGathered.stone} Iron:${stats.blocksGathered.iron}`);
+    }, 500);
+  }
+  
+  // Agency introspection
+  if (msg === 'nova why' || msg === 'nova explain') {
+    const phase = worldMemory.autonomousProgress.phase;
+    const phaseInfo = getCurrentPhaseInfo();
+    const current = currentAutonomousGoal;
+    const queued = requestQueue.length;
+    
+    if (current) {
+      bot.chat(`I'm ${current.reason?.replace(/_/g, ' ') || current.action} because I'm in the ${phase} phase.`);
+    } else {
+      bot.chat(`I'm idle. ${phase} phase: ${phaseInfo.description}`);
+    }
+    
+    if (queued > 0) {
+      setTimeout(() => bot.chat(`I have ${queued} request(s) queued for later.`), 500);
+    }
+  }
+  
+  if (msg === 'nova queue') {
+    if (requestQueue.length === 0) {
+      bot.chat("My request queue is empty.");
+    } else {
+      const items = requestQueue.map(q => `${q.request.action} from ${q.requester}`).join(', ');
+      bot.chat(`Queued: ${items}`);
+    }
+  }
+  
+  if (msg === 'nova clear queue') {
+    const trust = getTrustLevel(username);
+    if (trust === TRUST_LEVELS.OWNER || trust === TRUST_LEVELS.FRIEND) {
+      const count = requestQueue.length;
+      requestQueue = [];
+      bot.chat(`Cleared ${count} queued requests.`);
+    } else {
+      bot.chat("Only my owner or friends can clear my queue.");
+    }
   }
 
   // Phase 17: Block Activation (CRITICAL)
@@ -1945,8 +3295,11 @@ function handleGoal(goalName) {
 // STARTUP
 // ==========================================
 
-console.log('AI-controlled Nova bot v3 starting (full survival features)...');
-console.log('Phases 8-16: Hunger, Crafting, Mining, Sleep, Building, Storage, Memory, Trading, Potions');
+console.log('AI-controlled Nova bot v4 starting (AGENCY MODE)...');
+console.log('Phases 8-19: Hunger, Crafting, Mining, Sleep, Building, Storage, Memory, Trading, Potions, Fishing');
+console.log('Phase 20: TRUE AUTONOMY - Bot has agency, evaluates all requests, negotiates!');
 console.log('Events:', EVENTS_FILE);
 console.log('Commands:', COMMANDS_FILE);
 console.log('World Memory:', WORLD_MEMORY_FILE);
+console.log('Default Goal:', AUTONOMOUS_CONFIG.defaultGoal);
+console.log('Autonomous:', AUTONOMOUS_CONFIG.enabled ? 'ENABLED (with agency)' : 'DISABLED');

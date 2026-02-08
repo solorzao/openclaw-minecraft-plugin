@@ -1,0 +1,32 @@
+{
+  "server": {
+    "host": "localhost",
+    "port": 25565,
+    "version": "1.21"
+  },
+  "bot": {
+    "username": "OpenClaw_Bot",
+    "auth": "offline"
+  },
+  "files": {
+    "events": "events.json",
+    "commands": "commands.json",
+    "worldMemory": "world-memory.json"
+  },
+  "intervals": {
+    "commandCheck": 750,
+    "perception": 3000,
+    "autoSurvival": 5000
+  },
+  "survival": {
+    "autoEat": true,
+    "autoEatThreshold": 6,
+    "retreatHealthThreshold": 6,
+    "drowningOxygenThreshold": 50
+  },
+  "pathfinding": {
+    "allowParkour": false,
+    "canDig": true,
+    "allowFreeMotion": false
+  }
+}

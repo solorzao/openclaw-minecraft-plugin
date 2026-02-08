@@ -1,0 +1,988 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/minecraft-ai-bot/schemas/events.schema.json",
+  "title": "Minecraft AI Bot Events Schema",
+  "description": "Schema for events.json - game state updates written by the bot",
+  "type": "array",
+  "items": {
+    "oneOf": [
+      {
+        "$ref": "#/definitions/SpawnEvent"
+      },
+      {
+        "$ref": "#/definitions/StatusEvent"
+      },
+      {
+        "$ref": "#/definitions/PerceptionEvent"
+      },
+      {
+        "$ref": "#/definitions/ChatEvent"
+      },
+      {
+        "$ref": "#/definitions/HealthChangeEvent"
+      },
+      {
+        "$ref": "#/definitions/HurtEvent"
+      },
+      {
+        "$ref": "#/definitions/GoalReachedEvent"
+      },
+      {
+        "$ref": "#/definitions/PathUpdateEvent"
+      },
+      {
+        "$ref": "#/definitions/PathResetEvent"
+      },
+      {
+        "$ref": "#/definitions/ErrorEvent"
+      },
+      {
+        "$ref": "#/definitions/DisconnectEvent"
+      },
+      {
+        "$ref": "#/definitions/KickedEvent"
+      },
+      {
+        "$ref": "#/definitions/CommandErrorEvent"
+      },
+      {
+        "$ref": "#/definitions/GoalSetEvent"
+      },
+      {
+        "$ref": "#/definitions/GoalFailedEvent"
+      },
+      {
+        "$ref": "#/definitions/DangerEvent"
+      },
+      {
+        "$ref": "#/definitions/UnknownCommandEvent"
+      },
+      {
+        "$ref": "#/definitions/UnknownGoalEvent"
+      },
+      {
+        "$ref": "#/definitions/BlockBrokenEvent"
+      },
+      {
+        "$ref": "#/definitions/DigFailedEvent"
+      },
+      {
+        "$ref": "#/definitions/DigErrorEvent"
+      },
+      {
+        "$ref": "#/definitions/BlockPlacedEvent"
+      },
+      {
+        "$ref": "#/definitions/PlaceFailedEvent"
+      },
+      {
+        "$ref": "#/definitions/PlaceErrorEvent"
+      },
+      {
+        "$ref": "#/definitions/ItemEquippedEvent"
+      },
+      {
+        "$ref": "#/definitions/EquipFailedEvent"
+      },
+      {
+        "$ref": "#/definitions/EquipErrorEvent"
+      },
+      {
+        "$ref": "#/definitions/AttackStartedEvent"
+      },
+      {
+        "$ref": "#/definitions/AttackFailedEvent"
+      },
+      {
+        "$ref": "#/definitions/CombatEndedEvent"
+      },
+      {
+        "$ref": "#/definitions/CombatRetreatEvent"
+      },
+      {
+        "$ref": "#/definitions/BlockActivatedEvent"
+      },
+      {
+        "$ref": "#/definitions/ActivateFailedEvent"
+      },
+      {
+        "$ref": "#/definitions/MountedEvent"
+      },
+      {
+        "$ref": "#/definitions/MountFailedEvent"
+      },
+      {
+        "$ref": "#/definitions/DismountedEvent"
+      },
+      {
+        "$ref": "#/definitions/DismountFailedEvent"
+      },
+      {
+        "$ref": "#/definitions/FishCaughtEvent"
+      },
+      {
+        "$ref": "#/definitions/FishFailedEvent"
+      }
+    ]
+  },
+  "definitions": {
+    "Position": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "z": {
+          "type": "number"
+        }
+      },
+      "required": ["x", "y", "z"]
+    },
+    "SpawnEvent": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "number",
+          "description": "Unix timestamp in milliseconds"
+        },
+        "type": {
+          "const": "spawn"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "position": {
+              "$ref": "#/definitions/Position"
+            },
+            "health": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 20
+            },
+            "food": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 20
+            }
+          },
+          "required": ["position"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "StatusEvent": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "status"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "position": {
+              "$ref": "#/definitions/Position"
+            },
+            "health": {
+              "type": "number"
+            },
+            "food": {
+              "type": "number"
+            },
+            "nearbyPlayers": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "username": {
+                    "type": "string"
+                  },
+                  "distance": {
+                    "type": "number"
+                  }
+                },
+                "required": ["username", "distance"]
+              }
+            }
+          },
+          "required": ["position", "health", "food", "nearbyPlayers"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "PerceptionEvent": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "perception"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "position": {
+              "$ref": "#/definitions/Position"
+            },
+            "health": {
+              "type": "number"
+            },
+            "food": {
+              "type": "number"
+            },
+            "nearbyPlayers": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "username": {
+                    "type": "string"
+                  },
+                  "distance": {
+                    "type": "number"
+                  },
+                  "position": {
+                    "$ref": "#/definitions/Position"
+                  }
+                },
+                "required": ["username", "distance", "position"]
+              }
+            },
+            "hostileMobs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": ["zombie", "skeleton", "creeper", "spider", "enderman", "witch", "slime", "phantom"]
+                  },
+                  "distance": {
+                    "type": "number"
+                  },
+                  "position": {
+                    "$ref": "#/definitions/Position"
+                  }
+                },
+                "required": ["type", "distance", "position"]
+              }
+            },
+            "dangerUnderfoot": {
+              "type": ["string", "null"],
+              "enum": ["cliff", "lava", "cactus", null]
+            },
+            "currentGoal": {
+              "type": ["object", "null"]
+            },
+            "inventory": {
+              "type": "array",
+              "description": "First 20 items in inventory (Phase 5)",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string", "description": "Item name (e.g., 'dirt', 'wooden_pickaxe')" },
+                  "count": { "type": "integer", "minimum": 1, "maximum": 64 },
+                  "slot": { "type": "integer", "description": "Inventory slot number" }
+                },
+                "required": ["name", "count", "slot"]
+              }
+            }
+          },
+          "required": ["position", "health", "food", "nearbyPlayers", "hostileMobs", "dangerUnderfoot"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "ChatEvent": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "chat"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "username": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": ["username", "message"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "HealthChangeEvent": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "health_change"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "health": {
+              "type": "number"
+            },
+            "food": {
+              "type": "number"
+            }
+          },
+          "required": ["health", "food"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "HurtEvent": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "hurt"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "health": {
+              "type": "number"
+            },
+            "attacker": {
+              "type": "string"
+            }
+          },
+          "required": ["health"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "GoalReachedEvent": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "goal_reached"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "goal": {
+              "type": ["object", "null"]
+            }
+          }
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "PathUpdateEvent": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "path_update"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": ["success", "noPath", "timeout"]
+            },
+            "time": {
+              "type": "number"
+            }
+          },
+          "required": ["status"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "PathResetEvent": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "path_reset"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "goal": {
+              "type": ["object", "null"]
+            }
+          },
+          "required": ["reason"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "ErrorEvent": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "error"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": ["message"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "DisconnectEvent": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "disconnect"
+        },
+        "data": {
+          "type": "object"
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "KickedEvent": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "kicked"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": ["reason"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "CommandErrorEvent": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "command_error"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "cmd": {
+              "type": "object"
+            },
+            "error": {
+              "type": "string"
+            }
+          },
+          "required": ["cmd", "error"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "GoalSetEvent": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "goal_set"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "goal": {
+              "type": "string"
+            },
+            "target": {
+              "type": "object"
+            }
+          },
+          "required": ["goal"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "GoalFailedEvent": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "goal_failed"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "goal": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": ["goal", "reason"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "DangerEvent": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "danger"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string",
+              "enum": ["low_health", "hostile_mob", "cliff", "lava", "fire"]
+            },
+            "health": {
+              "type": "number"
+            }
+          },
+          "required": ["reason"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "UnknownCommandEvent": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "unknown_command"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "cmd": {
+              "type": "object"
+            }
+          },
+          "required": ["cmd"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "UnknownGoalEvent": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "number"
+        },
+        "type": {
+          "const": "unknown_goal"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "goal": {
+              "type": "string"
+            }
+          },
+          "required": ["goal"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "BlockBrokenEvent": {
+      "type": "object",
+      "description": "A block was successfully broken (Phase 5)",
+      "properties": {
+        "timestamp": { "type": "number" },
+        "type": { "const": "block_broken" },
+        "data": {
+          "type": "object",
+          "properties": {
+            "blockType": { "type": "string", "description": "Block type that was broken" },
+            "position": { "$ref": "#/definitions/Position" }
+          },
+          "required": ["blockType", "position"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "DigFailedEvent": {
+      "type": "object",
+      "description": "Dig operation failed (Phase 5)",
+      "properties": {
+        "timestamp": { "type": "number" },
+        "type": { "const": "dig_failed" },
+        "data": {
+          "type": "object",
+          "properties": {
+            "reason": { "type": "string", "enum": ["no_block", "too_far", "unreachable"] },
+            "position": { "$ref": "#/definitions/Position" }
+          },
+          "required": ["reason"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "DigErrorEvent": {
+      "type": "object",
+      "description": "Dig operation error (Phase 5)",
+      "properties": {
+        "timestamp": { "type": "number" },
+        "type": { "const": "dig_error" },
+        "data": {
+          "type": "object",
+          "properties": {
+            "error": { "type": "string" },
+            "position": { "$ref": "#/definitions/Position" }
+          },
+          "required": ["error"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "BlockPlacedEvent": {
+      "type": "object",
+      "description": "A block was successfully placed (Phase 5)",
+      "properties": {
+        "timestamp": { "type": "number" },
+        "type": { "const": "block_placed" },
+        "data": {
+          "type": "object",
+          "properties": {
+            "blockType": { "type": "string" },
+            "position": {}
+          },
+          "required": ["blockType"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "PlaceFailedEvent": {
+      "type": "object",
+      "description": "Place operation failed (Phase 5)",
+      "properties": {
+        "timestamp": { "type": "number" },
+        "type": { "const": "place_failed" },
+        "data": {
+          "type": "object",
+          "properties": {
+            "reason": { "type": "string", "enum": ["no_item", "no_reference_block", "blocked"] },
+            "item": { "type": "string" }
+          },
+          "required": ["reason"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "PlaceErrorEvent": {
+      "type": "object",
+      "description": "Place operation error (Phase 5)",
+      "properties": {
+        "timestamp": { "type": "number" },
+        "type": { "const": "place_error" },
+        "data": {
+          "type": "object",
+          "properties": {
+            "error": { "type": "string" },
+            "blockType": { "type": "string" }
+          },
+          "required": ["error"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "ItemEquippedEvent": {
+      "type": "object",
+      "description": "An item was equipped (Phase 5)",
+      "properties": {
+        "timestamp": { "type": "number" },
+        "type": { "const": "item_equipped" },
+        "data": {
+          "type": "object",
+          "properties": {
+            "item": { "type": "string" },
+            "hand": { "type": "string", "enum": ["hand", "off-hand"] }
+          },
+          "required": ["item", "hand"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "EquipFailedEvent": {
+      "type": "object",
+      "description": "Equip operation failed (Phase 5)",
+      "properties": {
+        "timestamp": { "type": "number" },
+        "type": { "const": "equip_failed" },
+        "data": {
+          "type": "object",
+          "properties": {
+            "reason": { "type": "string", "enum": ["no_item"] },
+            "item": { "type": "string" }
+          },
+          "required": ["reason", "item"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "EquipErrorEvent": {
+      "type": "object",
+      "description": "Equip operation error (Phase 5)",
+      "properties": {
+        "timestamp": { "type": "number" },
+        "type": { "const": "equip_error" },
+        "data": {
+          "type": "object",
+          "properties": {
+            "error": { "type": "string" },
+            "item": { "type": "string" }
+          },
+          "required": ["error"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "AttackStartedEvent": {
+      "type": "object",
+      "description": "Combat started against a target (Phase 6)",
+      "properties": {
+        "timestamp": { "type": "number" },
+        "type": { "const": "attack_started" },
+        "data": {
+          "type": "object",
+          "properties": {
+            "target": { "type": "string", "description": "Mob type being attacked" },
+            "distance": { "type": "number", "description": "Initial distance to target" }
+          },
+          "required": ["target", "distance"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "AttackFailedEvent": {
+      "type": "object",
+      "description": "Attack failed to find target (Phase 6)",
+      "properties": {
+        "timestamp": { "type": "number" },
+        "type": { "const": "attack_failed" },
+        "data": {
+          "type": "object",
+          "properties": {
+            "reason": { "type": "string", "enum": ["no_target"] },
+            "target": { "type": "string" }
+          },
+          "required": ["reason"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "CombatEndedEvent": {
+      "type": "object",
+      "description": "Combat ended (Phase 6)",
+      "properties": {
+        "timestamp": { "type": "number" },
+        "type": { "const": "combat_ended" },
+        "data": {
+          "type": "object",
+          "properties": {
+            "reason": { "type": "string", "enum": ["target_gone", "target_died", "retreated"] },
+            "target": { "type": "string" }
+          },
+          "required": ["reason", "target"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "CombatRetreatEvent": {
+      "type": "object",
+      "description": "Bot retreated from combat due to low health (Phase 6)",
+      "properties": {
+        "timestamp": { "type": "number" },
+        "type": { "const": "combat_retreat" },
+        "data": {
+          "type": "object",
+          "properties": {
+            "health": { "type": "number" },
+            "reason": { "type": "string" }
+          },
+          "required": ["health", "reason"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "BlockActivatedEvent": {
+      "type": "object",
+      "description": "Bot activated/right-clicked a block (Phase 17)",
+      "properties": {
+        "timestamp": { "type": "number" },
+        "type": { "const": "block_activated" },
+        "data": {
+          "type": "object",
+          "properties": {
+            "blockType": { "type": "string" },
+            "position": { "$ref": "#/definitions/Position" }
+          },
+          "required": ["blockType", "position"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "ActivateFailedEvent": {
+      "type": "object",
+      "description": "Block activation failed (Phase 17)",
+      "properties": {
+        "timestamp": { "type": "number" },
+        "type": { "const": "activate_failed" },
+        "data": {
+          "type": "object",
+          "properties": {
+            "reason": { "type": "string" },
+            "blockType": { "type": "string" }
+          },
+          "required": ["reason"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "MountedEvent": {
+      "type": "object",
+      "description": "Bot mounted an entity (Phase 18)",
+      "properties": {
+        "timestamp": { "type": "number" },
+        "type": { "const": "mounted" },
+        "data": {
+          "type": "object",
+          "properties": {
+            "entity": { "type": "string" },
+            "entityId": { "type": "integer" }
+          },
+          "required": ["entity", "entityId"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "MountFailedEvent": {
+      "type": "object",
+      "description": "Mounting failed (Phase 18)",
+      "properties": {
+        "timestamp": { "type": "number" },
+        "type": { "const": "mount_failed" },
+        "data": {
+          "type": "object",
+          "properties": {
+            "reason": { "type": "string" }
+          },
+          "required": ["reason"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "DismountedEvent": {
+      "type": "object",
+      "description": "Bot dismounted from entity (Phase 18)",
+      "properties": {
+        "timestamp": { "type": "number" },
+        "type": { "const": "dismounted" },
+        "data": {
+          "type": "object"
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "DismountFailedEvent": {
+      "type": "object",
+      "description": "Dismounting failed (Phase 18)",
+      "properties": {
+        "timestamp": { "type": "number" },
+        "type": { "const": "dismount_failed" },
+        "data": {
+          "type": "object",
+          "properties": {
+            "reason": { "type": "string" }
+          },
+          "required": ["reason"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "FishCaughtEvent": {
+      "type": "object",
+      "description": "Bot caught a fish (Phase 19)",
+      "properties": {
+        "timestamp": { "type": "number" },
+        "type": { "const": "fish_caught" },
+        "data": {
+          "type": "object",
+          "properties": {
+            "item": { "type": "string" }
+          },
+          "required": ["item"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    },
+    "FishFailedEvent": {
+      "type": "object",
+      "description": "Fishing failed (Phase 19)",
+      "properties": {
+        "timestamp": { "type": "number" },
+        "type": { "const": "fish_failed" },
+        "data": {
+          "type": "object",
+          "properties": {
+            "reason": { "type": "string" }
+          },
+          "required": ["reason"]
+        }
+      },
+      "required": ["timestamp", "type", "data"]
+    }
+  }
+}

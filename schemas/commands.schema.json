@@ -1,0 +1,443 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/minecraft-ai-bot/schemas/commands.schema.json",
+  "title": "Minecraft AI Bot Commands Schema",
+  "description": "Schema for commands.json - commands written by AI, executed by bot",
+  "type": "array",
+  "items": {
+    "oneOf": [
+      {
+        "$ref": "#/definitions/ChatCommand"
+      },
+      {
+        "$ref": "#/definitions/JumpCommand"
+      },
+      {
+        "$ref": "#/definitions/SneakCommand"
+      },
+      {
+        "$ref": "#/definitions/LookAtPlayerCommand"
+      },
+      {
+        "$ref": "#/definitions/FollowCommand"
+      },
+      {
+        "$ref": "#/definitions/GotoCommand"
+      },
+      {
+        "$ref": "#/definitions/StopCommand"
+      },
+      {
+        "$ref": "#/definitions/GoalCommand"
+      },
+      {
+        "$ref": "#/definitions/DigCommand"
+      },
+      {
+        "$ref": "#/definitions/PlaceCommand"
+      },
+      {
+        "$ref": "#/definitions/EquipCommand"
+      },
+      {
+        "$ref": "#/definitions/AttackCommand"
+      },
+      {
+        "$ref": "#/definitions/DefendCommand"
+      },
+      {
+        "$ref": "#/definitions/CraftCommand"
+      },
+      {
+        "$ref": "#/definitions/SmeltCommand"
+      },
+      {
+        "$ref": "#/definitions/ActivateCommand"
+      },
+      {
+        "$ref": "#/definitions/MountCommand"
+      },
+      {
+        "$ref": "#/definitions/DismountCommand"
+      },
+      {
+        "$ref": "#/definitions/FishCommand"
+      }
+    ]
+  },
+  "definitions": {
+    "Position": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "integer"
+        },
+        "y": {
+          "type": "integer"
+        },
+        "z": {
+          "type": "integer"
+        }
+      },
+      "required": ["x", "y", "z"]
+    },
+    "ChatCommand": {
+      "type": "object",
+      "description": "Send a chat message in-game",
+      "properties": {
+        "action": {
+          "const": "chat"
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 256,
+          "description": "Message to send (max 256 chars)"
+        }
+      },
+      "required": ["action", "message"],
+      "additionalProperties": false
+    },
+    "JumpCommand": {
+      "type": "object",
+      "description": "Make the bot jump once",
+      "properties": {
+        "action": {
+          "const": "jump"
+        }
+      },
+      "required": ["action"],
+      "additionalProperties": false
+    },
+    "SneakCommand": {
+      "type": "object",
+      "description": "Make the bot sneak (crouch) for specified duration",
+      "properties": {
+        "action": {
+          "const": "sneak"
+        },
+        "duration": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 5000,
+          "default": 500,
+          "description": "Sneak duration in milliseconds (100-5000)"
+        }
+      },
+      "required": ["action"],
+      "additionalProperties": false
+    },
+    "LookAtPlayerCommand": {
+      "type": "object",
+      "description": "Turn to look at a specific player",
+      "properties": {
+        "action": {
+          "const": "look_at_player"
+        },
+        "username": {
+          "type": "string",
+          "description": "Minecraft username to look at"
+        }
+      },
+      "required": ["action", "username"],
+      "additionalProperties": false
+    },
+    "FollowCommand": {
+      "type": "object",
+      "description": "Follow a player using pathfinding",
+      "properties": {
+        "action": {
+          "const": "follow"
+        },
+        "username": {
+          "type": "string",
+          "description": "Minecraft username to follow"
+        },
+        "distance": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 10,
+          "default": 2,
+          "description": "Follow distance in blocks (1-10)"
+        }
+      },
+      "required": ["action", "username"],
+      "additionalProperties": false
+    },
+    "GotoCommand": {
+      "type": "object",
+      "description": "Navigate to specific coordinates using pathfinding",
+      "properties": {
+        "action": {
+          "const": "goto"
+        },
+        "x": {
+          "type": "integer",
+          "description": "Target X coordinate"
+        },
+        "y": {
+          "type": "integer",
+          "minimum": -64,
+          "maximum": 320,
+          "description": "Target Y coordinate (height, -64 to 320)"
+        },
+        "z": {
+          "type": "integer",
+          "description": "Target Z coordinate"
+        }
+      },
+      "required": ["action", "x", "y", "z"],
+      "additionalProperties": false
+    },
+    "StopCommand": {
+      "type": "object",
+      "description": "Stop all movement/pathfinding",
+      "properties": {
+        "action": {
+          "const": "stop"
+        }
+      },
+      "required": ["action"],
+      "additionalProperties": false
+    },
+    "GoalCommand": {
+      "type": "object",
+      "description": "Set high-level autonomous goal",
+      "properties": {
+        "action": {
+          "const": "goal"
+        },
+        "goal": {
+          "type": "string",
+          "enum": ["gather_wood", "explore", "gather_stone", "build_shelter", "idle"],
+          "description": "Goal type"
+        }
+      },
+      "required": ["action", "goal"],
+      "additionalProperties": false
+    },
+    "DigCommand": {
+      "type": "object",
+      "description": "Break/dig a block at specific position or direction (Phase 5 - Implemented)",
+      "properties": {
+        "action": {
+          "const": "dig"
+        },
+        "position": {
+          "$ref": "#/definitions/Position",
+          "description": "Absolute block coordinates to dig"
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["front", "back", "left", "right", "above", "below"],
+          "description": "Relative direction to dig (alternative to position)"
+        }
+      },
+      "required": ["action"],
+      "additionalProperties": false,
+      "x-phase": 5,
+      "x-status": "implemented",
+      "x-events": ["block_broken", "dig_failed", "dig_error"]
+    },
+    "PlaceCommand": {
+      "type": "object",
+      "description": "Place a block at specific position (Phase 5 - Implemented)",
+      "properties": {
+        "action": {
+          "const": "place"
+        },
+        "blockType": {
+          "type": "string",
+          "description": "Block type to place (e.g., 'cobblestone', 'dirt', 'planks')"
+        },
+        "position": {
+          "$ref": "#/definitions/Position",
+          "description": "Optional - defaults to front of bot on ground"
+        }
+      },
+      "required": ["action", "blockType"],
+      "additionalProperties": false,
+      "x-phase": 5,
+      "x-status": "implemented",
+      "x-events": ["block_placed", "place_failed", "place_error"]
+    },
+    "EquipCommand": {
+      "type": "object",
+      "description": "Equip an item from inventory (Phase 5 - Implemented)",
+      "properties": {
+        "action": {
+          "const": "equip"
+        },
+        "item": {
+          "type": "string",
+          "description": "Item name to equip (e.g., 'wooden_pickaxe', 'iron_sword'). Supports partial matching."
+        },
+        "hand": {
+          "type": "string",
+          "enum": ["main", "off"],
+          "default": "main",
+          "description": "Which hand to equip in"
+        }
+      },
+      "required": ["action", "item"],
+      "additionalProperties": false,
+      "x-phase": 5,
+      "x-status": "implemented",
+      "x-events": ["item_equipped", "equip_failed", "equip_error"]
+    },
+    "AttackCommand": {
+      "type": "object",
+      "description": "Attack a specific mob type or nearest hostile (Phase 6 - Implemented)",
+      "properties": {
+        "action": {
+          "const": "attack"
+        },
+        "target": {
+          "type": "string",
+          "description": "Optional mob type to attack (e.g., 'zombie', 'skeleton'). If omitted, attacks nearest hostile."
+        }
+      },
+      "required": ["action"],
+      "additionalProperties": false,
+      "x-phase": 6,
+      "x-status": "implemented",
+      "x-events": ["attack_started", "attack_failed", "combat_ended", "combat_retreat"],
+      "x-notes": "Combat loop runs until target dies, escapes, or bot health < 6 (auto-retreat)"
+    },
+    "DefendCommand": {
+      "type": "object",
+      "description": "Set defensive mode (Phase 6 - Coming Soon)",
+      "properties": {
+        "action": {
+          "const": "defend"
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["aggressive", "defensive", "passive"],
+          "description": "Combat mode: aggressive (attack all hostiles), defensive (attack when attacked), passive (never attack)"
+        }
+      },
+      "required": ["action", "mode"],
+      "additionalProperties": false,
+      "x-phase": 6,
+      "x-status": "not_implemented"
+    },
+    "CraftCommand": {
+      "type": "object",
+      "description": "Craft an item (Phase 7 - Coming Soon)",
+      "properties": {
+        "action": {
+          "const": "craft"
+        },
+        "recipe": {
+          "type": "string",
+          "description": "Item to craft (e.g., 'wooden_pickaxe', 'crafting_table')"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64,
+          "default": 1,
+          "description": "Number of items to craft"
+        }
+      },
+      "required": ["action", "recipe"],
+      "additionalProperties": false,
+      "x-phase": 7,
+      "x-status": "not_implemented"
+    },
+    "SmeltCommand": {
+      "type": "object",
+      "description": "Smelt items in a furnace (Phase 7 - Coming Soon)",
+      "properties": {
+        "action": {
+          "const": "smelt"
+        },
+        "item": {
+          "type": "string",
+          "description": "Item to smelt (e.g., 'iron_ore', 'raw_beef')"
+        },
+        "fuel": {
+          "type": "string",
+          "description": "Fuel to use (e.g., 'coal', 'charcoal', 'planks')"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64,
+          "default": 1
+        }
+      },
+      "required": ["action", "item", "fuel"],
+      "additionalProperties": false,
+      "x-phase": 7,
+      "x-status": "not_implemented"
+    },
+    "ActivateCommand": {
+      "type": "object",
+      "description": "Right-click/activate a block (doors, buttons, levers, etc.) - Phase 17 CRITICAL",
+      "properties": {
+        "action": {
+          "const": "activate"
+        },
+        "position": {
+          "$ref": "#/definitions/Position",
+          "description": "Optional block position. If omitted, activates block in front of bot."
+        }
+      },
+      "required": ["action"],
+      "additionalProperties": false,
+      "x-phase": 17,
+      "x-status": "implemented",
+      "x-events": ["block_activated", "activate_failed"],
+      "x-notes": "Essential for opening doors, pressing buttons, pulling levers, interacting with crafting tables/furnaces"
+    },
+    "MountCommand": {
+      "type": "object",
+      "description": "Mount a nearby entity (horse, boat, minecart, pig) - Phase 18 HIGH-VALUE",
+      "properties": {
+        "action": {
+          "const": "mount"
+        },
+        "entityId": {
+          "type": "integer",
+          "description": "Optional entity ID. If omitted, mounts nearest mountable entity within 5 blocks."
+        }
+      },
+      "required": ["action"],
+      "additionalProperties": false,
+      "x-phase": 18,
+      "x-status": "implemented",
+      "x-events": ["mounted", "mount_failed"],
+      "x-notes": "Enables fast travel (horses 2x speed), water navigation (boats), escape mechanism"
+    },
+    "DismountCommand": {
+      "type": "object",
+      "description": "Dismount from current vehicle - Phase 18 HIGH-VALUE",
+      "properties": {
+        "action": {
+          "const": "dismount"
+        }
+      },
+      "required": ["action"],
+      "additionalProperties": false,
+      "x-phase": 18,
+      "x-status": "implemented",
+      "x-events": ["dismounted", "dismount_failed"]
+    },
+    "FishCommand": {
+      "type": "object",
+      "description": "Start fishing (requires fishing rod in inventory) - Phase 19 HIGH-VALUE",
+      "properties": {
+        "action": {
+          "const": "fish"
+        }
+      },
+      "required": ["action"],
+      "additionalProperties": false,
+      "x-phase": 19,
+      "x-status": "implemented",
+      "x-events": ["fish_caught", "fish_failed"],
+      "x-notes": "Alternative food source, can catch treasure items, peaceful survival option"
+    }
+  }
+}

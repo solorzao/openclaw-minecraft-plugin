@@ -1,0 +1,37 @@
+{
+  "name": "openclaw-minecraft-plugin",
+  "version": "3.1.0",
+  "description": "Full-featured AI-controlled Minecraft bot for OpenClaw - autonomous survival, crafting, mining, combat, and more",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/solorzao/openclaw-minecraft-plugin.git"
+  },
+  "keywords": [
+    "minecraft",
+    "bot",
+    "mineflayer",
+    "ai",
+    "openclaw",
+    "autonomous",
+    "survival"
+  ],
+  "author": "Nova & Oliver",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/solorzao/openclaw-minecraft-plugin/issues"
+  },
+  "homepage": "https://github.com/solorzao/openclaw-minecraft-plugin#readme",
+  "dependencies": {
+    "mineflayer": "^4.20.1",
+    "mineflayer-pathfinder": "^2.4.4",
+    "vec3": "^0.1.8"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

@@ -5367,3 +5367,897 @@ function handleGoal(goalName) {
       return;
   }
 }
+
+// ==========================================
+// PHASE 23: CRITICAL SURVIVAL FEATURES
+// ==========================================
+
+// Feature 1: Furnace Smelting 🔥
+const SMELTABLE_ITEMS = {
+  // Ores
+  'iron_ore': 'iron_ingot',
+  'deepslate_iron_ore': 'iron_ingot',
+  'raw_iron': 'iron_ingot',
+  'gold_ore': 'gold_ingot',
+  'deepslate_gold_ore': 'gold_ingot',
+  'raw_gold': 'gold_ingot',
+  'copper_ore': 'copper_ingot',
+  'deepslate_copper_ore': 'copper_ingot',
+  'raw_copper': 'copper_ingot',
+  'ancient_debris': 'netherite_scrap',
+  // Other smeltables
+  'cobblestone': 'stone',
+  'stone': 'smooth_stone',
+  'sand': 'glass',
+  'clay_ball': 'brick',
+  'netherrack': 'nether_brick',
+  'wet_sponge': 'sponge',
+  'cactus': 'green_dye',
+};
+
+const FUEL_ITEMS = [
+  { name: 'lava_bucket', burnTime: 20000, count: 1 },
+  { name: 'coal_block', burnTime: 16000, count: 9 },
+  { name: 'coal', burnTime: 1600, count: 1 },
+  { name: 'charcoal', burnTime: 1600, count: 1 },
+  { name: 'blaze_rod', burnTime: 2400, count: 1 },
+  { name: 'dried_kelp_block', burnTime: 4000, count: 1 },
+];
+
+// Add plank types dynamically
+const WOOD_TYPES = ['oak', 'spruce', 'birch', 'jungle', 'acacia', 'dark_oak', 'mangrove', 'cherry', 'bamboo', 'crimson', 'warped'];
+WOOD_TYPES.forEach(type => {
+  FUEL_ITEMS.push({ name: `${type}_planks`, burnTime: 300, count: 1 });
+  FUEL_ITEMS.push({ name: `${type}_log`, burnTime: 300, count: 1 });
+  FUEL_ITEMS.push({ name: `stripped_${type}_log`, burnTime: 300, count: 1 });
+});
+
+async function smeltItem(itemName, count = null) {
+  // Normalize item name
+  itemName = itemName.replace(/ /g, '_').toLowerCase();
+  
+  // Find the item in inventory
+  const itemToSmelt = bot.inventory.items().find(i => 
+    i.name === itemName || 
+    i.name.includes(itemName) ||
+    itemName.includes(i.name)
+  );
+  
+  if (!itemToSmelt) {
+    bot.chat(`I don't have any ${itemName} to smelt!`);
+    logEvent('smelt_failed', { reason: 'no_item', item: itemName });
+    return false;
+  }
+  
+  // Determine output
+  const outputName = SMELTABLE_ITEMS[itemToSmelt.name];
+  if (!outputName) {
+    bot.chat(`${itemToSmelt.name} cannot be smelted!`);
+    logEvent('smelt_failed', { reason: 'not_smeltable', item: itemToSmelt.name });
+    return false;
+  }
+  
+  const smeltCount = count || itemToSmelt.count;
+  
+  // Find furnace nearby
+  let furnace = bot.findBlock({
+    matching: block => block.name === 'furnace' || block.name === 'blast_furnace' || block.name === 'smoker',
+    maxDistance: 32
+  });
+  
+  if (!furnace) {
+    // Try to craft and place a furnace
+    const cobble = countInventoryItem('cobblestone');
+    if (cobble >= 8) {
+      const crafted = await craftItem('furnace');
+      if (crafted) {
+        // Find a safe place to place furnace
+        const pos = bot.entity.position.floored();
+        const below = bot.blockAt(pos.offset(1, -1, 0));
+        if (below && below.name !== 'air') {
+          const furnaceItem = bot.inventory.items().find(i => i.name === 'furnace');
+          if (furnaceItem) {
+            await bot.equip(furnaceItem, 'hand');
+            try {
+              await bot.placeBlock(below, new Vec3(0, 1, 0));
+              furnace = bot.blockAt(pos.offset(1, 0, 0));
+              logEvent('furnace_placed', { position: pos.offset(1, 0, 0) });
+            } catch (e) {
+              bot.chat('Failed to place furnace!');
+              return false;
+            }
+          }
+        }
+      }
+    }
+    
+    if (!furnace) {
+      bot.chat('No furnace nearby and cannot craft one (need 8 cobblestone)!');
+      logEvent('smelt_failed', { reason: 'no_furnace' });
+      return false;
+    }
+  }
+  
+  // Find fuel
+  let fuelItem = null;
+  let fuelCount = 0;
+  
+  for (const fuel of FUEL_ITEMS) {
+    const found = bot.inventory.items().find(i => i.name === fuel.name);
+    if (found) {
+      fuelItem = found;
+      // Calculate how much fuel we need (1 fuel = 8 items for most, 100 for lava bucket)
+      const itemsPerFuel = fuel.name === 'lava_bucket' ? 100 : 8;
+      fuelCount = Math.ceil(smeltCount / itemsPerFuel);
+      fuelCount = Math.min(fuelCount, found.count);
+      break;
+    }
+  }
+  
+  if (!fuelItem) {
+    bot.chat('No fuel available! Need coal, wood, or other fuel items.');
+    logEvent('smelt_failed', { reason: 'no_fuel' });
+    return false;
+  }
+  
+  try {
+    // Navigate to furnace
+    await bot.pathfinder.goto(new GoalNear(furnace.position.x, furnace.position.y, furnace.position.z, 2));
+    
+    // Open furnace
+    const furnaceBlock = await bot.openFurnace(furnace);
+    
+    // Add fuel
+    await furnaceBlock.putFuel(fuelItem.type, null, fuelCount);
+    logEvent('fuel_added', { item: fuelItem.name, count: fuelCount });
+    
+    // Add item to smelt
+    const actualSmeltCount = Math.min(smeltCount, itemToSmelt.count);
+    await furnaceBlock.putInput(itemToSmelt.type, null, actualSmeltCount);
+    
+    logEvent('smelting_started', { 
+      item: itemToSmelt.name, 
+      count: actualSmeltCount,
+      expectedOutput: outputName 
+    });
+    bot.chat(`Smelting ${actualSmeltCount} ${itemToSmelt.name}...`);
+    
+    // Wait for smelting (10 seconds per item, max 5 minutes)
+    const waitTime = Math.min(actualSmeltCount * 10000, 300000);
+    
+    // Poll for completion
+    let collected = 0;
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < waitTime) {
+      await new Promise(r => setTimeout(r, 5000)); // Check every 5 seconds
+      
+      const output = furnaceBlock.outputItem();
+      if (output && output.count > 0) {
+        await furnaceBlock.takeOutput();
+        collected += output.count;
+        logEvent('smelt_output_collected', { item: output.name, count: output.count });
+        
+        // Check if input is empty
+        const input = furnaceBlock.inputItem();
+        if (!input || input.count === 0) {
+          break; // All done
+        }
+      }
+    }
+    
+    // Final collection
+    const finalOutput = furnaceBlock.outputItem();
+    if (finalOutput && finalOutput.count > 0) {
+      await furnaceBlock.takeOutput();
+      collected += finalOutput.count;
+    }
+    
+    furnaceBlock.close();
+    
+    bot.chat(`Smelted ${collected} ${outputName}!`);
+    logEvent('smelting_complete', { 
+      input: itemToSmelt.name, 
+      output: outputName, 
+      count: collected 
+    });
+    
+    return collected > 0;
+  } catch (err) {
+    logEvent('smelt_failed', { error: err.message });
+    bot.chat(`Smelting failed: ${err.message}`);
+    return false;
+  }
+}
+
+// Feature 2: Crop Farming 🌾
+const CROP_DATA = {
+  'wheat': { seed: 'wheat_seeds', crop: 'wheat', age: 7, replant: true },
+  'wheat_seeds': { seed: 'wheat_seeds', crop: 'wheat', age: 7, replant: true },
+  'carrot': { seed: 'carrot', crop: 'carrots', age: 7, replant: true },
+  'carrots': { seed: 'carrot', crop: 'carrots', age: 7, replant: true },
+  'potato': { seed: 'potato', crop: 'potatoes', age: 7, replant: true },
+  'potatoes': { seed: 'potato', crop: 'potatoes', age: 7, replant: true },
+  'beetroot': { seed: 'beetroot_seeds', crop: 'beetroots', age: 3, replant: true },
+  'beetroot_seeds': { seed: 'beetroot_seeds', crop: 'beetroots', age: 3, replant: true },
+  'melon': { seed: 'melon_seeds', crop: 'melon_stem', age: 7, replant: false },
+  'pumpkin': { seed: 'pumpkin_seeds', crop: 'pumpkin_stem', age: 7, replant: false },
+  'nether_wart': { seed: 'nether_wart', crop: 'nether_wart', age: 3, replant: true },
+};
+
+const HOE_TYPES = ['netherite_hoe', 'diamond_hoe', 'iron_hoe', 'golden_hoe', 'stone_hoe', 'wooden_hoe'];
+
+// Track farm plots for efficient farming
+let farmPlots = [];
+
+async function tillSoil(radius = 5) {
+  // Find and equip hoe
+  const hoe = bot.inventory.items().find(i => HOE_TYPES.includes(i.name));
+  if (!hoe) {
+    bot.chat("I don't have a hoe!");
+    logEvent('till_failed', { reason: 'no_hoe' });
+    return false;
+  }
+  
+  await bot.equip(hoe, 'hand');
+  
+  // Find dirt/grass blocks near water (farmland needs water within 4 blocks)
+  const waterBlocks = bot.findBlocks({
+    matching: block => block.name === 'water',
+    maxDistance: 32,
+    count: 10
+  });
+  
+  if (waterBlocks.length === 0) {
+    bot.chat("No water nearby for farming!");
+    logEvent('till_failed', { reason: 'no_water' });
+    return false;
+  }
+  
+  // Find tillable blocks near water
+  const tillableBlocks = [];
+  const waterPos = waterBlocks[0];
+  
+  for (let x = -radius; x <= radius; x++) {
+    for (let z = -radius; z <= radius; z++) {
+      const checkPos = waterPos.offset(x, 0, z);
+      // Check at water level and one above
+      for (let y = -1; y <= 1; y++) {
+        const block = bot.blockAt(checkPos.offset(0, y, 0));
+        if (block && (block.name === 'dirt' || block.name === 'grass_block' || block.name === 'coarse_dirt')) {
+          // Check if air above
+          const above = bot.blockAt(checkPos.offset(0, y + 1, 0));
+          if (above && above.name === 'air') {
+            tillableBlocks.push(block);
+          }
+        }
+      }
+    }
+  }
+  
+  if (tillableBlocks.length === 0) {
+    bot.chat("No tillable dirt found near water!");
+    logEvent('till_failed', { reason: 'no_dirt' });
+    return false;
+  }
+  
+  let tilled = 0;
+  bot.chat(`Tilling ${tillableBlocks.length} blocks...`);
+  
+  for (const block of tillableBlocks.slice(0, 20)) { // Limit to 20 blocks per operation
+    try {
+      // Navigate close to block
+      const dist = bot.entity.position.distanceTo(block.position);
+      if (dist > 4) {
+        await bot.pathfinder.goto(new GoalNear(block.position.x, block.position.y, block.position.z, 2));
+      }
+      
+      // Till the block (right-click with hoe)
+      await bot.activateBlock(block);
+      tilled++;
+      
+      // Track as farm plot
+      farmPlots.push({
+        position: { x: block.position.x, y: block.position.y, z: block.position.z },
+        crop: null,
+        planted: null
+      });
+      
+      await new Promise(r => setTimeout(r, 250)); // Small delay between tills
+    } catch (err) {
+      // Might fail if already farmland, skip
+    }
+  }
+  
+  logEvent('tilling_complete', { tilled, total: tillableBlocks.length });
+  bot.chat(`Tilled ${tilled} blocks!`);
+  
+  // Save farm plots to world memory
+  worldMemory.farmPlots = farmPlots;
+  saveWorldMemory();
+  
+  return tilled > 0;
+}
+
+async function plantCrop(cropType) {
+  cropType = cropType.toLowerCase().replace(/ /g, '_');
+  
+  const cropInfo = CROP_DATA[cropType];
+  if (!cropInfo) {
+    bot.chat(`Unknown crop: ${cropType}. Try: wheat, carrot, potato, beetroot`);
+    return false;
+  }
+  
+  // Find seeds in inventory
+  const seeds = bot.inventory.items().find(i => i.name === cropInfo.seed);
+  if (!seeds) {
+    bot.chat(`I don't have any ${cropInfo.seed}!`);
+    logEvent('plant_failed', { reason: 'no_seeds', seed: cropInfo.seed });
+    return false;
+  }
+  
+  await bot.equip(seeds, 'hand');
+  
+  // Find farmland blocks
+  const farmlandBlocks = bot.findBlocks({
+    matching: block => block.name === 'farmland',
+    maxDistance: 32,
+    count: 50
+  });
+  
+  if (farmlandBlocks.length === 0) {
+    bot.chat("No farmland to plant on! Use 'nova till' first.");
+    return false;
+  }
+  
+  let planted = 0;
+  
+  for (const pos of farmlandBlocks) {
+    if (planted >= seeds.count) break;
+    
+    // Check if already has a crop
+    const above = bot.blockAt(pos.offset(0, 1, 0));
+    if (above && above.name !== 'air') continue;
+    
+    try {
+      // Navigate close
+      const dist = bot.entity.position.distanceTo(pos);
+      if (dist > 4) {
+        await bot.pathfinder.goto(new GoalNear(pos.x, pos.y, pos.z, 2));
+      }
+      
+      // Plant (right-click on farmland)
+      const farmland = bot.blockAt(pos);
+      await bot.placeBlock(farmland, new Vec3(0, 1, 0));
+      planted++;
+      
+      // Update farm plot tracking
+      const plotIndex = farmPlots.findIndex(p => 
+        p.position.x === pos.x && p.position.y === pos.y && p.position.z === pos.z
+      );
+      if (plotIndex >= 0) {
+        farmPlots[plotIndex].crop = cropType;
+        farmPlots[plotIndex].planted = Date.now();
+      } else {
+        farmPlots.push({
+          position: { x: pos.x, y: pos.y, z: pos.z },
+          crop: cropType,
+          planted: Date.now()
+        });
+      }
+      
+      await new Promise(r => setTimeout(r, 200));
+    } catch (err) {
+      // Skip failures
+    }
+  }
+  
+  logEvent('planting_complete', { crop: cropType, planted });
+  bot.chat(`Planted ${planted} ${cropType}!`);
+  
+  worldMemory.farmPlots = farmPlots;
+  saveWorldMemory();
+  
+  return planted > 0;
+}
+
+async function harvestCrops(autoReplant = true) {
+  let harvested = 0;
+  let replanted = 0;
+  
+  // Find all mature crops
+  const matureCrops = [];
+  
+  for (const [cropName, info] of Object.entries(CROP_DATA)) {
+    const blocks = bot.findBlocks({
+      matching: block => {
+        if (!block.name.includes(info.crop.split('_')[0])) return false;
+        // Check if mature (age property equals max age)
+        const props = block.getProperties ? block.getProperties() : {};
+        return props.age !== undefined && parseInt(props.age) >= info.age;
+      },
+      maxDistance: 32,
+      count: 50
+    });
+    
+    for (const pos of blocks) {
+      matureCrops.push({ pos, cropName, info });
+    }
+  }
+  
+  if (matureCrops.length === 0) {
+    bot.chat("No mature crops to harvest!");
+    return false;
+  }
+  
+  bot.chat(`Harvesting ${matureCrops.length} crops...`);
+  
+  for (const { pos, cropName, info } of matureCrops) {
+    try {
+      const dist = bot.entity.position.distanceTo(pos);
+      if (dist > 4) {
+        await bot.pathfinder.goto(new GoalNear(pos.x, pos.y, pos.z, 2));
+      }
+      
+      const block = bot.blockAt(pos);
+      if (block) {
+        // Dig/break the crop
+        await bot.dig(block);
+        harvested++;
+        
+        // Collect dropped items
+        await new Promise(r => setTimeout(r, 300));
+        
+        // Replant if enabled and we have seeds
+        if (autoReplant && info.replant) {
+          const seeds = bot.inventory.items().find(i => i.name === info.seed);
+          if (seeds) {
+            await bot.equip(seeds, 'hand');
+            const farmland = bot.blockAt(pos.offset(0, -1, 0));
+            if (farmland && farmland.name === 'farmland') {
+              try {
+                await bot.placeBlock(farmland, new Vec3(0, 1, 0));
+                replanted++;
+              } catch (e) {}
+            }
+          }
+        }
+      }
+      
+      await new Promise(r => setTimeout(r, 200));
+    } catch (err) {
+      // Skip failures
+    }
+  }
+  
+  logEvent('harvest_complete', { harvested, replanted });
+  bot.chat(`Harvested ${harvested} crops, replanted ${replanted}!`);
+  
+  return harvested > 0;
+}
+
+async function farmCycle(cropType = 'wheat') {
+  bot.chat(`Starting full farming cycle for ${cropType}...`);
+  
+  // Step 1: Till soil if needed
+  const farmland = bot.findBlock({
+    matching: block => block.name === 'farmland',
+    maxDistance: 32
+  });
+  
+  if (!farmland) {
+    await tillSoil(5);
+  }
+  
+  // Step 2: Plant crops
+  await plantCrop(cropType);
+  
+  // Step 3: Wait for growth (wheat takes ~20-30 minutes, we'll check periodically)
+  bot.chat("Crops planted! I'll check on them periodically.");
+  
+  // Set up a harvest check
+  const harvestCheck = setInterval(async () => {
+    // Find mature crops
+    const crops = CROP_DATA[cropType];
+    if (!crops) {
+      clearInterval(harvestCheck);
+      return;
+    }
+    
+    const mature = bot.findBlock({
+      matching: block => {
+        if (!block.name.includes(crops.crop.split('_')[0])) return false;
+        const props = block.getProperties ? block.getProperties() : {};
+        return props.age !== undefined && parseInt(props.age) >= crops.age;
+      },
+      maxDistance: 32
+    });
+    
+    if (mature) {
+      clearInterval(harvestCheck);
+      await harvestCrops(true);
+      bot.chat("Farm cycle complete!");
+    }
+  }, 60000); // Check every minute
+  
+  // Clear after 30 minutes max
+  setTimeout(() => clearInterval(harvestCheck), 1800000);
+  
+  return true;
+}
+
+// Feature 3: Ranged Combat 🏹
+let rangedCombatActive = false;
+let shieldBlockActive = false;
+
+async function shootTarget(targetName) {
+  // Find bow in inventory
+  const bow = bot.inventory.items().find(i => i.name === 'bow' || i.name === 'crossbow');
+  if (!bow) {
+    bot.chat("I don't have a bow!");
+    logEvent('shoot_failed', { reason: 'no_bow' });
+    return false;
+  }
+  
+  // Find arrows
+  const arrows = bot.inventory.items().find(i => i.name.includes('arrow'));
+  if (!arrows) {
+    bot.chat("I don't have any arrows!");
+    logEvent('shoot_failed', { reason: 'no_arrows' });
+    return false;
+  }
+  
+  // Find target
+  let target = null;
+  if (targetName) {
+    targetName = targetName.toLowerCase();
+    
+    // Check if player
+    const player = Object.values(bot.players).find(p => 
+      p.username.toLowerCase() === targetName && p.entity
+    );
+    if (player) {
+      target = player.entity;
+    }
+    
+    // Check if mob
+    if (!target) {
+      target = Object.values(bot.entities)
+        .filter(e => e.type === 'mob' || e.type === 'hostile')
+        .filter(e => e.name?.toLowerCase().includes(targetName))
+        .filter(e => e.position && bot.entity.position.distanceTo(e.position) < 64)
+        .sort((a, b) => bot.entity.position.distanceTo(a.position) - bot.entity.position.distanceTo(b.position))[0];
+    }
+  } else {
+    // Find nearest hostile
+    const hostiles = getNearbyHostiles();
+    if (hostiles.length > 0) {
+      target = hostiles[0];
+    }
+  }
+  
+  if (!target || !target.position) {
+    bot.chat(`Cannot find target: ${targetName || 'any hostile'}`);
+    logEvent('shoot_failed', { reason: 'no_target', target: targetName });
+    return false;
+  }
+  
+  await bot.equip(bow, 'hand');
+  rangedCombatActive = true;
+  
+  currentGoal = { type: 'ranged_combat', target: target.name, entityId: target.id };
+  logEvent('ranged_combat_started', { target: target.name });
+  bot.chat(`Engaging ${target.name} at range!`);
+  
+  // Combat loop
+  const combatLoop = setInterval(async () => {
+    // Re-find target (might have moved)
+    const currentTarget = bot.entities[target.id];
+    
+    if (!currentTarget || !currentTarget.position) {
+      clearInterval(combatLoop);
+      rangedCombatActive = false;
+      currentGoal = null;
+      bot.chat("Target lost!");
+      return;
+    }
+    
+    const distance = bot.entity.position.distanceTo(currentTarget.position);
+    
+    // Maintain optimal range (15-25 blocks for bow)
+    if (distance < 10) {
+      // Too close, back up
+      const fleeX = bot.entity.position.x + (bot.entity.position.x - currentTarget.position.x);
+      const fleeZ = bot.entity.position.z + (bot.entity.position.z - currentTarget.position.z);
+      bot.pathfinder.setGoal(new GoalNear(Math.floor(fleeX), bot.entity.position.y, Math.floor(fleeZ), 1), true);
+    } else if (distance > 30) {
+      // Too far, move closer
+      bot.pathfinder.setGoal(new GoalNear(currentTarget.position.x, currentTarget.position.y, currentTarget.position.z, 20), true);
+    } else {
+      // Good range, aim and shoot
+      bot.pathfinder.setGoal(null); // Stop moving
+      
+      // Look at target
+      const targetHead = currentTarget.position.offset(0, currentTarget.height || 1.6, 0);
+      await bot.lookAt(targetHead, true);
+      
+      // Calculate projectile arc (basic leading)
+      const velocity = currentTarget.velocity || new Vec3(0, 0, 0);
+      const flightTime = distance / 30; // Approximate arrow speed
+      const predictedPos = currentTarget.position.offset(
+        velocity.x * flightTime,
+        velocity.y * flightTime + 0.5, // Aim slightly high for arc
+        velocity.z * flightTime
+      );
+      await bot.lookAt(predictedPos, true);
+      
+      // Draw and release bow
+      bot.activateItem(); // Start drawing
+      await new Promise(r => setTimeout(r, 1000)); // Draw time
+      bot.deactivateItem(); // Release
+      
+      logEvent('arrow_shot', { target: currentTarget.name, distance: Math.floor(distance) });
+    }
+    
+    // Health check - retreat if low
+    if (bot.health < 8) {
+      clearInterval(combatLoop);
+      rangedCombatActive = false;
+      currentGoal = null;
+      
+      const fleeX = bot.entity.position.x + (bot.entity.position.x - currentTarget.position.x) * 3;
+      const fleeZ = bot.entity.position.z + (bot.entity.position.z - currentTarget.position.z) * 3;
+      bot.pathfinder.setGoal(new GoalXZ(Math.floor(fleeX), Math.floor(fleeZ)));
+      
+      logEvent('ranged_retreat', { health: bot.health });
+      bot.chat("Low health! Retreating!");
+      return;
+    }
+    
+    // Arrow check
+    const currentArrows = bot.inventory.items().find(i => i.name.includes('arrow'));
+    if (!currentArrows) {
+      clearInterval(combatLoop);
+      rangedCombatActive = false;
+      currentGoal = null;
+      bot.chat("Out of arrows!");
+      return;
+    }
+  }, 1500); // Attack every 1.5 seconds
+  
+  return true;
+}
+
+async function blockWithShield() {
+  const shield = bot.inventory.items().find(i => i.name === 'shield');
+  if (!shield) {
+    bot.chat("I don't have a shield!");
+    logEvent('block_failed', { reason: 'no_shield' });
+    return false;
+  }
+  
+  // Equip shield in off-hand
+  await bot.equip(shield, 'off-hand');
+  
+  // Activate blocking
+  shieldBlockActive = true;
+  bot.activateItem(true); // Use off-hand item
+  
+  logEvent('shield_blocking', { active: true });
+  bot.chat("Blocking with shield!");
+  
+  // Auto-stop after 5 seconds
+  setTimeout(() => {
+    if (shieldBlockActive) {
+      bot.deactivateItem();
+      shieldBlockActive = false;
+      bot.chat("Stopped blocking.");
+    }
+  }, 5000);
+  
+  return true;
+}
+
+function stopBlocking() {
+  if (shieldBlockActive) {
+    bot.deactivateItem();
+    shieldBlockActive = false;
+    logEvent('shield_blocking', { active: false });
+  }
+}
+
+// Feature 4: Inventory Management 📦
+const ESSENTIAL_ITEMS = [
+  // Tools
+  'pickaxe', 'axe', 'shovel', 'hoe', 'shears',
+  // Weapons
+  'sword', 'bow', 'crossbow', 'trident', 'shield',
+  // Armor (keep equipped)
+  'helmet', 'chestplate', 'leggings', 'boots',
+  // Food
+  'cooked_beef', 'cooked_porkchop', 'cooked_chicken', 'cooked_mutton', 'bread',
+  'golden_apple', 'baked_potato', 'cooked_salmon', 'cooked_cod', 'steak',
+  // Essential materials
+  'torch', 'crafting_table', 'furnace', 'coal', 'iron_ingot',
+];
+
+const LOW_VALUE_ITEMS = [
+  'dirt', 'cobblestone', 'gravel', 'sand', 'netherrack', 'andesite',
+  'diorite', 'granite', 'cobbled_deepslate', 'tuff', 'rotten_flesh',
+  'poisonous_potato', 'bone', 'string', 'spider_eye', 'gunpowder',
+  'flint', 'seeds', 'wheat_seeds',
+];
+
+let inventoryManagementActive = false;
+let previousTask = null;
+
+function getInventoryUsage() {
+  const items = bot.inventory.items();
+  return items.length;
+}
+
+function isEssentialItem(itemName) {
+  return ESSENTIAL_ITEMS.some(essential => itemName.includes(essential));
+}
+
+function isLowValueItem(itemName) {
+  return LOW_VALUE_ITEMS.some(low => itemName.includes(low));
+}
+
+async function autoManageInventory() {
+  const usage = getInventoryUsage();
+  
+  // Check if inventory is getting full (36 slots total, trigger at 32+)
+  if (usage < 32) {
+    return false; // Not needed yet
+  }
+  
+  logEvent('inventory_full_warning', { usage, total: 36 });
+  
+  // Save current task if any
+  if (currentAutonomousGoal) {
+    previousTask = { ...currentAutonomousGoal };
+  }
+  
+  inventoryManagementActive = true;
+  
+  // Strategy 1: Find and use nearby chest
+  const chest = bot.findBlock({
+    matching: block => block.name === 'chest' || block.name === 'barrel' || block.name === 'trapped_chest',
+    maxDistance: 64
+  });
+  
+  if (chest) {
+    bot.chat("Inventory full! Depositing items in chest...");
+    
+    try {
+      await bot.pathfinder.goto(new GoalNear(chest.position.x, chest.position.y, chest.position.z, 2));
+      const chestContainer = await bot.openContainer(chest);
+      
+      let deposited = 0;
+      const items = bot.inventory.items();
+      
+      for (const item of items) {
+        // Skip essential items
+        if (isEssentialItem(item.name)) continue;
+        
+        // Deposit non-essential items
+        try {
+          await chestContainer.deposit(item.type, null, item.count);
+          deposited++;
+          logEvent('item_deposited', { item: item.name, count: item.count });
+        } catch (e) {
+          // Chest might be full
+          break;
+        }
+      }
+      
+      chestContainer.close();
+      bot.chat(`Deposited ${deposited} item stacks!`);
+      logEvent('inventory_managed', { method: 'chest', deposited });
+      
+    } catch (err) {
+      logEvent('deposit_failed', { error: err.message });
+    }
+  } else {
+    // Strategy 2: No chest - drop low value items
+    bot.chat("Inventory full! No chest nearby - dropping low value items...");
+    
+    const items = bot.inventory.items();
+    let dropped = 0;
+    
+    for (const item of items) {
+      if (isLowValueItem(item.name)) {
+        try {
+          await bot.tossStack(item);
+          dropped++;
+          logEvent('item_dropped_auto', { item: item.name, count: item.count });
+        } catch (e) {}
+      }
+      
+      // Check if we freed enough space
+      if (getInventoryUsage() < 28) break;
+    }
+    
+    if (dropped > 0) {
+      bot.chat(`Dropped ${dropped} low-value item stacks to make room.`);
+    } else {
+      bot.chat("Could not free inventory space - all items are essential!");
+    }
+    
+    logEvent('inventory_managed', { method: 'drop', dropped });
+  }
+  
+  inventoryManagementActive = false;
+  
+  // Resume previous task if any
+  if (previousTask) {
+    bot.chat("Resuming previous task...");
+    currentAutonomousGoal = previousTask;
+    previousTask = null;
+    await executeCommand(currentAutonomousGoal);
+  }
+  
+  return true;
+}
+
+// Auto inventory management check (runs periodically)
+function checkInventoryPeriodically() {
+  setInterval(() => {
+    if (!inventoryManagementActive && !isPlayerCommandActive()) {
+      const usage = getInventoryUsage();
+      if (usage >= 32) {
+        autoManageInventory();
+      }
+    }
+  }, 30000); // Check every 30 seconds
+}
+
+// Update perception to include new Phase 23 state
+function getPhase23Perception() {
+  return {
+    smelting: {
+      hasFurnace: bot.findBlock({ matching: b => b.name === 'furnace', maxDistance: 32 }) !== null,
+      hasFuel: FUEL_ITEMS.some(f => bot.inventory.items().find(i => i.name === f.name)),
+      smeltableItems: Object.keys(SMELTABLE_ITEMS).filter(item => 
+        bot.inventory.items().find(i => i.name === item)
+      )
+    },
+    farming: {
+      farmPlots: farmPlots.length,
+      hasHoe: bot.inventory.items().some(i => HOE_TYPES.includes(i.name)),
+      hasSeeds: Object.values(CROP_DATA).some(c => 
+        bot.inventory.items().find(i => i.name === c.seed)
+      )
+    },
+    rangedCombat: {
+      hasBow: bot.inventory.items().some(i => i.name === 'bow' || i.name === 'crossbow'),
+      hasArrows: bot.inventory.items().some(i => i.name.includes('arrow')),
+      hasShield: bot.inventory.items().some(i => i.name === 'shield'),
+      rangedCombatActive,
+      shieldBlockActive
+    },
+    inventory: {
+      usage: getInventoryUsage(),
+      total: 36,
+      isFull: getInventoryUsage() >= 32,
+      nearbyChest: bot.findBlock({ matching: b => b.name === 'chest', maxDistance: 64 }) !== null
+    }
+  };
+}
+
+// ==========================================
+// STARTUP
+// ==========================================
+
+console.log('AI-controlled Nova bot v7 starting (PHASE 23 COMPLETE!)...');
+console.log('Phases 8-19: Hunger, Crafting, Mining, Sleep, Building, Storage, Memory, Trading, Potions, Fishing');
+console.log('Phase 20: TRUE AUTONOMY - Bot has agency, evaluates all requests, negotiates!');
+console.log('Phase 21: BOT-TO-BOT COMMUNICATION - Whisper-based coordination, discovery, emergencies!');
+console.log('Phase 22: 8 CRITICAL CAPABILITIES - Vehicle, Entity Interaction, Items, Look, Sound, XP, Books, Block Watch!');
+console.log('Phase 23: CRITICAL SURVIVAL - Smelting, Farming, Ranged Combat, Inventory Management!');
+console.log('Events:', EVENTS_FILE);
+console.log('Commands:', COMMANDS_FILE);
+console.log('World Memory:', WORLD_MEMORY_FILE);
+console.log('Default Goal:', AUTONOMOUS_CONFIG.defaultGoal);
+console.log('Autonomous:', AUTONOMOUS_CONFIG.enabled ? 'ENABLED (with agency)' : 'DISABLED');

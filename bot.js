@@ -8,6 +8,7 @@ const { GoalFollow, GoalBlock, GoalNear, GoalXZ } = goals;
 const EVENTS_FILE = '/data/minecraft-bot/events.json';
 const COMMANDS_FILE = '/data/minecraft-bot/commands.json';
 const WORLD_MEMORY_FILE = '/data/minecraft-bot/world-memory.json';
+const STATE_FILE = '/data/minecraft-bot/state.json';
 
 // ==========================================
 // SOUL.md INTEGRATION - Personality & Values
@@ -337,6 +338,7 @@ function addShyFlair(msg) {
 }
 
 let events = [];
+let eventIdCounter = 0;
 let movements;
 let currentGoal = null;
 
@@ -1668,7 +1670,7 @@ function safeWrite(file, content) {
 }
 
 function logEvent(type, data) {
-  const event = { timestamp: Date.now(), type, data };
+  const event = { id: ++eventIdCounter, timestamp: Date.now(), type, data };
   events.push(event);
   if (events.length > 100) events.shift();
   safeWrite(EVENTS_FILE, JSON.stringify(events, null, 2));
@@ -1762,6 +1764,92 @@ bot.on('spawn', () => {
   setInterval(processResponses, 1000);  // Poll for agent conversation responses
   setInterval(updatePerception, 3000);
   setInterval(autoSurvival, 5000);  // Phase 8: Auto-survival check
+
+  // OpenClaw: State broadcasting - write rich state for AI controller
+  setInterval(() => {
+    try {
+      const inventory = bot.inventory.items().map(item => ({
+        name: item.name,
+        count: item.count,
+        slot: item.slot
+      }));
+
+      const nearbyPlayers = Object.values(bot.players)
+        .filter(p => p.entity && p.username !== bot.username)
+        .map(p => ({
+          username: p.username,
+          distance: Math.round(bot.entity.position.distanceTo(p.entity.position)),
+          position: {
+            x: Math.floor(p.entity.position.x),
+            y: Math.floor(p.entity.position.y),
+            z: Math.floor(p.entity.position.z)
+          }
+        }));
+
+      const hostiles = getNearbyHostiles().map(e => ({
+        type: e.name,
+        distance: Math.round(bot.entity.position.distanceTo(e.position)),
+        position: {
+          x: Math.floor(e.position.x),
+          y: Math.floor(e.position.y),
+          z: Math.floor(e.position.z)
+        }
+      }));
+
+      const state = {
+        timestamp: Date.now(),
+        username: bot.username,
+        position: {
+          x: Math.floor(bot.entity.position.x),
+          y: Math.floor(bot.entity.position.y),
+          z: Math.floor(bot.entity.position.z)
+        },
+        health: bot.health,
+        food: bot.food,
+        experience: bot.experience,
+        currentGoal: currentAutonomousGoal || currentGoal,
+        inventory,
+        nearbyPlayers,
+        nearbyHostiles: hostiles,
+        perception: generatePerception(),
+        worldMemory
+      };
+
+      safeWrite(STATE_FILE, JSON.stringify(state, null, 2));
+    } catch (e) {
+      console.error('State broadcast error:', e.message);
+    }
+  }, 5000);
+
+  // OpenClaw: Command polling - read and execute commands from AI controller
+  setInterval(() => {
+    try {
+      if (!fs.existsSync(COMMANDS_FILE)) return;
+      const raw = fs.readFileSync(COMMANDS_FILE, 'utf8').trim();
+      if (!raw || raw === '[]') return;
+
+      const cmds = JSON.parse(raw);
+      if (!Array.isArray(cmds) || cmds.length === 0) return;
+
+      // Clear the file immediately to prevent re-execution
+      safeWrite(COMMANDS_FILE, '[]');
+
+      logEvent('openclaw_commands_received', { count: cmds.length, commands: cmds.map(c => c.action) });
+
+      for (const cmd of cmds) {
+        try {
+          executeCommand(cmd);
+        } catch (e) {
+          console.error('OpenClaw command failed:', cmd, e);
+          logEvent('openclaw_command_error', { cmd, error: String(e) });
+        }
+      }
+    } catch (e) {
+      // File might be mid-write or invalid JSON - skip this cycle
+      if (e instanceof SyntaxError) return;
+      console.error('Command poll error:', e.message);
+    }
+  }, 2000);
   
   // Periodically check request queue
   setInterval(() => {
@@ -3546,6 +3634,45 @@ function setAutonomousGoal(goalName) {
 // ==========================================
 
 async function autoSurvival() {
+  // Auto-swim: escape water before drowning
+  if (bot.entity.isInWater) {
+    bot.setControlState('jump', true);
+    bot.setControlState('sprint', true);
+
+    // Try to pathfind to nearby land
+    if (!currentGoal || currentGoal !== 'escape_water') {
+      const pos = bot.entity.position.floored();
+      // Search for a non-water, non-air solid block nearby to stand on
+      for (let r = 1; r <= 16; r++) {
+        for (const [dx, dz] of [[r,0],[-r,0],[0,r],[0,-r],[r,r],[-r,-r],[r,-r],[-r,r]]) {
+          for (let dy = -2; dy <= 4; dy++) {
+            try {
+              const checkPos = pos.offset(dx, dy, dz);
+              const block = bot.blockAt(checkPos);
+              const above = bot.blockAt(checkPos.offset(0, 1, 0));
+              if (block && block.name !== 'water' && block.name !== 'air' && block.name !== 'lava'
+                  && above && (above.name === 'air' || above.name === 'cave_air')) {
+                currentGoal = 'escape_water';
+                const goal = new GoalBlock(checkPos.x, checkPos.y + 1, checkPos.z);
+                bot.pathfinder.setGoal(goal);
+                logEvent('swimming_to_land', { target: { x: checkPos.x, y: checkPos.y, z: checkPos.z }, distance: r });
+                r = 999; // break all loops
+                break;
+              }
+            } catch (e) { /* chunk not loaded */ }
+          }
+          if (r === 999) break;
+        }
+      }
+    }
+  } else if (currentGoal === 'escape_water') {
+    // Made it to land, stop swimming
+    bot.setControlState('jump', false);
+    bot.setControlState('sprint', false);
+    currentGoal = null;
+    logEvent('escaped_water', { position: bot.entity.position.floored() });
+  }
+
   // Auto-eat when hungry (Phase 8) - this is self-preservation, always do it
   if (bot.food < 6) {
     await autoEat();
@@ -3624,13 +3751,16 @@ function updatePerception() {
 
   const inWater = bot.entity.isInWater;
   const oxygen = bot.oxygenLevel;
-  
-  if (inWater && oxygen < 50) {
+
+  if (inWater) {
+    // Always hold jump to swim upward when submerged
     bot.setControlState('jump', true);
-    logEvent('danger', { reason: 'drowning_critical', oxygen, inWater: true });
-  } else if (inWater && oxygen < 100) {
-    logEvent('danger', { reason: 'drowning_warning', oxygen, inWater: true });
-    bot.setControlState('jump', false);
+
+    if (oxygen < 40) {
+      logEvent('danger', { reason: 'drowning_critical', oxygen, inWater: true });
+    } else if (oxygen < 70) {
+      logEvent('danger', { reason: 'drowning_warning', oxygen, inWater: true });
+    }
   } else {
     bot.setControlState('jump', false);
   }
@@ -3710,13 +3840,126 @@ function updatePerception() {
 }
 
 // ==========================================
+// OPENCLAW: STRUCTURED WORLD PERCEPTION
+// ==========================================
+
+function getCardinalDirection(from, to) {
+  const dx = to.x - from.x;
+  const dz = to.z - from.z;
+  const angle = Math.atan2(-dx, dz) * (180 / Math.PI);
+  const normalized = ((angle % 360) + 360) % 360;
+  const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  return directions[Math.round(normalized / 45) % 8];
+}
+
+function generatePerception() {
+  const pos = bot.entity.position;
+
+  // Block scan: sample blocks in a 16-block radius, count all block types
+  const blockCounts = {};
+  const SCAN_RADIUS = 16;
+
+  const center = pos.floored();
+  for (let dx = -SCAN_RADIUS; dx <= SCAN_RADIUS; dx += 2) {
+    for (let dy = -8; dy <= 8; dy += 2) {
+      for (let dz = -SCAN_RADIUS; dz <= SCAN_RADIUS; dz += 2) {
+        try {
+          const block = bot.blockAt(center.offset(dx, dy, dz));
+          if (block) {
+            blockCounts[block.name] = (blockCounts[block.name] || 0) + 1;
+          }
+        } catch (e) { /* chunk not loaded */ }
+      }
+    }
+  }
+
+  // Entities: type, name, distance, direction
+  const entities = Object.values(bot.entities)
+    .filter(e => e !== bot.entity && e.position && pos.distanceTo(e.position) < 48)
+    .map(e => ({
+      type: e.type,
+      name: e.name || e.username || 'unknown',
+      distance: Math.round(pos.distanceTo(e.position)),
+      direction: getCardinalDirection(pos, e.position),
+      position: {
+        x: Math.floor(e.position.x),
+        y: Math.floor(e.position.y),
+        z: Math.floor(e.position.z)
+      }
+    }))
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, 30);
+
+  // Ray-traced block the bot is looking at
+  let lookingAt = null;
+  try {
+    const block = bot.blockAtCursor(5);
+    if (block) {
+      lookingAt = {
+        name: block.name,
+        position: { x: block.position.x, y: block.position.y, z: block.position.z }
+      };
+    }
+  } catch (e) { /* cursor trace failed */ }
+
+  // Light level at bot position
+  let lightLevel = null;
+  try {
+    const blockAtPos = bot.blockAt(pos.floored());
+    if (blockAtPos) lightLevel = blockAtPos.light;
+  } catch (e) { /* skip */ }
+
+  // Time of day
+  const timeOfDay = bot.time.timeOfDay;
+  let timePhase = 'day';
+  if (timeOfDay >= 12541 && timeOfDay <= 23458) timePhase = 'night';
+  else if (timeOfDay >= 11616 && timeOfDay < 12541) timePhase = 'sunset';
+  else if (timeOfDay >= 23458 || timeOfDay < 450) timePhase = 'sunrise';
+
+  // Biome
+  let biome = null;
+  try {
+    const b = bot.blockAt(pos.floored());
+    if (b && b.biome) biome = b.biome.name;
+  } catch (e) { /* skip */ }
+
+  return {
+    nearbyBlocks: blockCounts,
+    entities,
+    lookingAt,
+    lightLevel,
+    timeOfDay: { tick: timeOfDay, phase: timePhase },
+    biome
+  };
+}
+
+// ==========================================
 // CHAT HANDLER - AUTONOMOUS SOCIAL AI
 // ==========================================
 
 bot.on('chat', (username, message) => {
   if (username === bot.username) return;
   console.log(`${username}: ${message}`);
-  logEvent('chat', { username, message });
+  const timeOfDay = bot.time.timeOfDay;
+  let timePhase = 'day';
+  if (timeOfDay >= 12541 && timeOfDay <= 23458) timePhase = 'night';
+  else if (timeOfDay >= 11616 && timeOfDay < 12541) timePhase = 'sunset';
+
+  logEvent('chat', {
+    username,
+    message,
+    context: {
+      botPosition: {
+        x: Math.floor(bot.entity.position.x),
+        y: Math.floor(bot.entity.position.y),
+        z: Math.floor(bot.entity.position.z)
+      },
+      currentGoal: currentAutonomousGoal?.action || currentGoal,
+      health: bot.health,
+      food: bot.food,
+      timePhase
+    }
+  });
 
   // Phase 21: Detect other bots by username patterns (no public spam)
   if (username.includes('Bot') || username.includes('_AI') || username.endsWith('_bot')) {

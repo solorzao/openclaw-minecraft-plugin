@@ -23,7 +23,9 @@
     "commandCheck": 750,
     "perception": 3000,
     "autoSurvival": 5000,
-    "autonomousCheck": 10000
+    "autonomousCheck": 10000,
+    "stateUpdate": 5000,
+    "commandPoll": 2000
   },
   "survival": {
     "autoEat": true,

@@ -520,6 +520,130 @@ const AUTONOMOUS_CONFIG = {
   }
 };
 
+// ==========================================
+// AUTONOMOUS SOCIAL AI: CONVERSATION SYSTEM
+// ==========================================
+
+const CONVERSATIONS_FILE = (process.env.DATA_DIR || '/data/minecraft-bot') + '/conversations.json';
+const RESPONSES_FILE = (process.env.DATA_DIR || '/data/minecraft-bot') + '/responses.json';
+
+let pendingConversations = [];
+let conversationIdCounter = Date.now();
+
+/**
+ * Check if message mentions or is directed at this bot
+ */
+function mentionsBot(message) {
+  const msg = message.toLowerCase();
+  const botName = bot.username.toLowerCase().replace(/_/g, ' ');
+
+  return msg.includes(botName) ||
+         msg.includes(bot.username.toLowerCase()) ||
+         msg.includes('@' + bot.username.toLowerCase());
+}
+
+/**
+ * Queue conversation for agent to respond
+ */
+function queueConversation(username, message) {
+  const conversation = {
+    id: conversationIdCounter++,
+    username: username,
+    message: message,
+    timestamp: new Date().toISOString(),
+    context: {
+      botName: bot.username,
+      botGoal: currentAutonomousGoal?.action || 'idle',
+      position: bot.entity ? { x: Math.floor(bot.entity.position.x), y: Math.floor(bot.entity.position.y), z: Math.floor(bot.entity.position.z) } : null,
+      health: bot.health,
+      food: bot.food,
+      inventory: bot.inventory ? bot.inventory.items().map(i => ({ name: i.name, count: i.count })) : [],
+      nearbyPlayers: Object.keys(bot.players).filter(p => p !== bot.username)
+    }
+  };
+
+  pendingConversations.push(conversation);
+  saveConversations();
+
+  console.log(`[Conversation] Queued from ${username}: "${message}"`);
+}
+
+/**
+ * Save conversations to file for agent
+ */
+function saveConversations() {
+  try {
+    fs.writeFileSync(CONVERSATIONS_FILE, JSON.stringify(pendingConversations, null, 2));
+  } catch (err) {
+    console.error('Failed to save conversations:', err.message);
+  }
+}
+
+/**
+ * Read and speak responses from agent
+ */
+function processResponses() {
+  try {
+    if (!fs.existsSync(RESPONSES_FILE)) return;
+
+    const responsesData = fs.readFileSync(RESPONSES_FILE, 'utf8');
+    if (!responsesData.trim()) return;
+
+    const responses = JSON.parse(responsesData);
+    if (!Array.isArray(responses) || responses.length === 0) return;
+
+    responses.forEach(resp => {
+      pendingConversations = pendingConversations.filter(c => c.id !== resp.conversationId);
+
+      if (resp.text) {
+        bot.chat(resp.text);
+        console.log(`[Conversation] Response: "${resp.text}"`);
+      }
+    });
+
+    fs.writeFileSync(RESPONSES_FILE, '[]');
+    saveConversations();
+
+  } catch (err) {
+    console.error('Failed to process responses:', err.message);
+  }
+}
+
+// Weighted autonomous goal categories for diverse behavior
+const AUTONOMOUS_GOAL_WEIGHTS = {
+  survival: {
+    weight: 10,
+    conditions: () => bot.health < 15 || bot.food < 10,
+    actions: ['find_food', 'eat', 'flee']
+  },
+  gathering: {
+    weight: 5,
+    conditions: () => {
+      const wood = countInventoryItem('log') + countInventoryItem('planks');
+      return wood < 32;
+    },
+    actions: ['gather_wood', 'mine_resource', 'fish']
+  },
+  building: {
+    weight: 3,
+    conditions: () => {
+      const hasResources = countInventoryItem('cobblestone') >= 16 || countInventoryItem('planks') >= 16;
+      return hasResources && !worldMemory.home;
+    },
+    actions: ['build', 'craft', 'set_home']
+  },
+  exploration: {
+    weight: 2,
+    conditions: () => true,
+    actions: ['explore', 'mark_location']
+  },
+  social: {
+    weight: 1,
+    conditions: () => getNearbyPlayers().length > 0,
+    actions: ['observe']
+  }
+};
+
 // Goal phases and their requirements
 const GOAL_PHASES = {
   thriving_survivor: {
@@ -620,6 +744,36 @@ function registerBot(username) {
 
 function isKnownBot(username) {
   return knownBots.has(username);
+}
+
+// ==========================================
+// BOT RELATIONSHIPS
+// ==========================================
+
+let botRelationships = {};
+
+function updateBotRelationship(botName, interactionType) {
+  if (!botRelationships[botName]) {
+    botRelationships[botName] = { lastInteraction: 0, helpCount: 0, friendly: true };
+  }
+
+  const rel = botRelationships[botName];
+  rel.lastInteraction = Date.now();
+
+  if (interactionType === 'help') {
+    rel.helpCount++;
+  }
+
+  worldMemory.botRelationships = botRelationships;
+  saveWorldMemory();
+}
+
+function shouldHelpBot(botName) {
+  const rel = botRelationships[botName];
+
+  if (!rel) return 0.5;
+
+  return Math.min(0.9, 0.5 + (rel.helpCount * 0.1));
 }
 
 /**
@@ -1458,7 +1612,12 @@ function loadWorldMemory() {
         worldMemory.knownBots.forEach(name => knownBots.add(name));
         console.log(`📡 Loaded ${knownBots.size} known bots from memory.`);
       }
-      
+
+      // Restore bot relationships
+      if (worldMemory.botRelationships) {
+        botRelationships = worldMemory.botRelationships;
+      }
+
       // Initialize missing fields with defaults
       if (!worldMemory.autonomousProgress) {
         worldMemory.autonomousProgress = {
@@ -1488,6 +1647,7 @@ function saveWorldMemory() {
     worldMemory.requestQueue = requestQueue;
     // Phase 21: Save known bots
     worldMemory.knownBots = Array.from(knownBots);
+    worldMemory.botRelationships = botRelationships;
     fs.writeFileSync(WORLD_MEMORY_FILE, JSON.stringify(worldMemory, null, 2));
   } catch (err) {
     console.error('Failed to save world memory:', err);
@@ -1531,37 +1691,31 @@ const bot = mineflayer.createBot(botConfig);
 bot.loadPlugin(pathfinder);
 
 // ==========================================
-// DYNAMIC COMMAND PREFIX SYSTEM
+// SPAWN GREETING
 // ==========================================
 
-/**
- * Get the command prefix from the bot's username
- * e.g., "Nova_AI" -> "nova", "Claude_Bot" -> "claude", "Bot_AI" -> "bot"
- */
-function getCommandPrefix() {
-  const username = bot.username.toLowerCase();
-  // Extract first part before underscore/number (Nova_AI -> nova, Claude_Bot -> claude)
-  return username.split(/[_\d]/)[0];
-}
+function generateSpawnGreeting() {
+  const greetings = [
+    "Hello World!",
+    "Hey everyone!",
+    "*waves*",
+    "Another day, another adventure!",
+    "What's everyone up to?"
+  ];
 
-/**
- * Check if a message starts with this bot's command prefix
- */
-function isCommandForMe(msg) {
-  const prefix = getCommandPrefix();
-  return msg.toLowerCase().startsWith(prefix + ' ') || msg.toLowerCase() === prefix;
-}
-
-/**
- * Strip the command prefix from a message
- */
-function stripPrefix(msg) {
-  const prefix = getCommandPrefix();
-  const lower = msg.toLowerCase();
-  if (lower.startsWith(prefix + ' ')) {
-    return msg.substring(prefix.length + 1).trim();
+  if (soul.vibe && soul.vibe.includes('shy')) {
+    return "*quietly joins the server*";
   }
-  return msg;
+
+  if (soul.vibe && soul.vibe.includes('quirky')) {
+    return "I have arrived! :)";
+  }
+
+  if (soul.vibe && soul.vibe.includes('competitive')) {
+    return "Let's see what we can build today.";
+  }
+
+  return greetings[Math.floor(Math.random() * greetings.length)];
 }
 
 bot.on('spawn', () => {
@@ -1602,7 +1756,7 @@ bot.on('spawn', () => {
     soulValues: soul.values.length
   });
 
-  setInterval(processCommands, 750);
+  setInterval(processResponses, 1000);  // Poll for agent conversation responses
   setInterval(updatePerception, 3000);
   setInterval(autoSurvival, 5000);  // Phase 8: Auto-survival check
   
@@ -1627,7 +1781,7 @@ bot.on('spawn', () => {
     
     if (otherPlayers.length > 0) {
       // Someone else is here - say hello
-      bot.chat('Hello World!');
+      bot.chat(generateSpawnGreeting());
       logEvent('bot_greeted', { username: bot.username, playersOnline: otherPlayers.length });
       
       // Discover other bots via whispers (not public chat spam)
@@ -2695,7 +2849,7 @@ async function tradeWithVillager(buyIndex = 0) {
         bot.chat(`Missing ${trade.inputItem1?.name} for trade!`);
       }
     } else {
-      bot.chat(`Villager has ${trades.trades.length} trades. Say "${getCommandPrefix()} trade N" to buy.`);
+      bot.chat(`Villager has ${trades.trades.length} trades available.`);
     }
     
     trades.close();
@@ -3555,7 +3709,7 @@ function updatePerception() {
 }
 
 // ==========================================
-// CHAT COMMAND HANDLER
+// CHAT HANDLER - AUTONOMOUS SOCIAL AI
 // ==========================================
 
 bot.on('chat', (username, message) => {
@@ -3568,739 +3722,11 @@ bot.on('chat', (username, message) => {
     registerBot(username);
   }
 
-  const msg = message.toLowerCase().trim();
-
-  // Dynamic command prefix
-  const cmd = getCommandPrefix();
-  
-  // Contextual introduction - only if asked
-  if (msg.includes('who are you') || msg.includes(`who is ${cmd}`) || msg === `${cmd} intro` || msg === `${cmd} hi` || msg === `${cmd} hello`) {
-    const intro = considerIntroducing();
-    if (intro) {
-      bot.chat(intro);
-    }
-    return;
-  }
-
-  // Help command
-  if (msg === `${cmd} help`) {
-    bot.chat('Commands: follow, stop, gather wood, explore, goto X Y Z, dig, place, equip, inventory');
-    setTimeout(() => bot.chat('find_food, cook_food, craft <item>, mine <resource>, sleep, eat, status'), 500);
-    setTimeout(() => bot.chat('build <template>, store, retrieve, mark <name>, goto_mark <name>, trade'), 1000);
-    setTimeout(() => bot.chat('AGENCY: why, queue, okay, nevermind'), 1500);
-    setTimeout(() => bot.chat('AUTONOMY: goals, set goal <name>, phase, progress'), 2000);
-    setTimeout(() => bot.chat('BOT-COM: bots, ask <bot> to <action>, announce <msg>, emergency, claims'), 3000);
-    setTimeout(() => bot.chat('VEHICLE: steer <dir>, stop vehicle | ENTITY: breed <animal>, shear, milk'), 3500);
-    setTimeout(() => bot.chat('ITEMS: drop <item> [count], give <player> <item> [count]'), 4000);
-    setTimeout(() => bot.chat('MISC: look at <player>, sounds, xp/level, write log, watch door/chest'), 4500);
-    setTimeout(() => bot.chat('SMELT: smelt <item> | FARM: till, plant <crop>, harvest, farm <crop>'), 5000);
-    setTimeout(() => bot.chat('COMBAT: shoot <target>, block/shield | INV: inv status, manage inventory'), 5500);
-    return;
-  }
-
-  // Basic commands - all go through agency system
-  if (msg === `${cmd} follow`) {
-    const request = { action: 'follow', username, distance: 2, originalMessage: message };
-    processExternalRequest(request, username);
-    return;
-  }
-  if (msg === `${cmd} stop`) {
-    // Stop is special - always accept, clears everything
-    currentAutonomousGoal = null;
-    requestQueue = [];
-    enqueueCommands([{ action: 'stop' }]);
-    bot.chat('Stopping. Returning to my goals...');
-    return;
-  }
-  if (msg === `${cmd} gather wood`) {
-    const request = { action: 'goal', goal: 'gather_wood', originalMessage: message };
-    processExternalRequest(request, username);
-    return;
-  }
-  if (msg === `${cmd} explore`) {
-    const request = { action: 'goal', goal: 'explore', originalMessage: message };
-    processExternalRequest(request, username);
-    return;
-  }
-  if (msg.startsWith(`${cmd} goto `) && msg.split(' ').length === 5) {
-    const parts = msg.split(/\s+/);
-    const x = parseInt(parts[2]);
-    const y = parseInt(parts[3]);
-    const z = parseInt(parts[4]);
-    if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
-      const request = { action: 'goto', x, y, z, originalMessage: message };
-      processExternalRequest(request, username);
-    }
-    return;
-  }
-  
-  // Block interaction (Phase 5)
-  if (msg === `${cmd} dig` || msg === `${cmd} mine`) {
-    enqueueCommands([{ action: 'dig', direction: 'front' }]);
-    bot.chat('Mining block!');
-  }
-  if (msg === `${cmd} dig below`) {
-    enqueueCommands([{ action: 'dig', direction: 'below' }]);
-  }
-  if (msg.startsWith(`${cmd} place `)) {
-    const blockType = msg.replace(`${cmd} place `, '').trim();
-    if (blockType) {
-      enqueueCommands([{ action: 'place', blockType }]);
-    }
-  }
-  if (msg.startsWith(`${cmd} equip `)) {
-    const item = msg.replace(`${cmd} equip `, '').trim();
-    if (item) enqueueCommands([{ action: 'equip', item }]);
-  }
-  if (msg === `${cmd} inventory` || msg === `${cmd} inv`) {
-    const items = bot.inventory.items();
-    if (items.length === 0) {
-      bot.chat('Inventory empty!');
-    } else {
-      const summary = items.slice(0, 6).map(i => `${i.name}x${i.count}`).join(', ');
-      bot.chat(`Inv: ${summary}${items.length > 6 ? '...' : ''}`);
-    }
-  }
-  
-  // Combat (Phase 6) - evaluated due to impact
-  if (msg === `${cmd} attack` || msg === `${cmd} fight`) {
-    const request = { action: 'attack', originalMessage: message };
-    processExternalRequest(request, username);
-    return;
-  }
-  if (msg.startsWith(`${cmd} attack `)) {
-    const target = msg.replace(`${cmd} attack `, '').trim();
-    const request = { action: 'attack', target, originalMessage: message };
-    processExternalRequest(request, username);
-    return;
-  }
-  if (msg === `${cmd} retreat`) {
-    // Retreat is always accepted - survival action
-    stopCombat();
-    stopHunting();
-    bot.chat('Retreating!');
-    return;
-  }
-
-  // Phase 8: Hunger/Food - evaluated
-  if (msg === `${cmd} find food` || msg === `${cmd} hunt`) {
-    const request = { action: 'find_food', originalMessage: message };
-    processExternalRequest(request, username);
-    return;
-  }
-  if (msg === `${cmd} cook` || msg === `${cmd} cook food`) {
-    const request = { action: 'cook_food', originalMessage: message };
-    processExternalRequest(request, username);
-    return;
-  }
-  if (msg === `${cmd} eat`) {
-    // Eating is always allowed - survival action
-    enqueueCommands([{ action: 'eat' }]);
-    return;
-  }
-  if (msg === `${cmd} status`) {
-    const trust = getTrustLevel(username);
-    const current = currentAutonomousGoal ? currentAutonomousGoal.action : 'idle';
-    bot.chat(`HP: ${Math.floor(bot.health)}/20, Food: ${bot.food}/20 | Current: ${current} | Your trust: ${trust}`);
-    return;
-  }
-
-  // Phase 9: Crafting - evaluated
-  if (msg.startsWith(`${cmd} craft `)) {
-    const itemName = msg.replace(`${cmd} craft `, '').trim();
-    const parts = itemName.split(' ');
-    let count = 1;
-    let item = itemName;
-    if (parts.length > 1 && !isNaN(parseInt(parts[parts.length - 1]))) {
-      count = parseInt(parts.pop());
-      item = parts.join('_');
-    }
-    const request = { action: 'craft', item: item.replace(/ /g, '_'), count, originalMessage: message };
-    processExternalRequest(request, username);
-    return;
-  }
-
-  // Phase 10: Mining - goes through agency (resource-intensive)
-  if (msg.startsWith(`${cmd} mine `)) {
-    const resource = msg.replace(`${cmd} mine `, '').trim();
-    const parts = resource.split(' ');
-    let count = 16;
-    let res = resource;
-    if (parts.length > 1 && !isNaN(parseInt(parts[parts.length - 1]))) {
-      count = parseInt(parts.pop());
-      res = parts.join('_');
-    }
-    const request = { action: 'mine_resource', resource: res.replace(/ /g, '_'), count, originalMessage: message };
-    processExternalRequest(request, username);
-    return;
-  }
-
-  // Phase 11: Sleep
-  if (msg === `${cmd} sleep` || msg === `${cmd} bed`) {
-    enqueueCommands([{ action: 'sleep' }]);
-  }
-
-  // Phase 12: Building - evaluated (resource-intensive)
-  if (msg.startsWith(`${cmd} build `)) {
-    const parts = msg.replace(`${cmd} build `, '').trim().split(' ');
-    const template = parts[0];
-    const blockType = parts[1] || 'cobblestone';
-    const request = { action: 'build', template, blockType, originalMessage: message };
-    processExternalRequest(request, username);
-    return;
-  }
-
-  // Phase 13: Storage - evaluated
-  if (msg === `${cmd} store` || msg === `${cmd} store items`) {
-    const request = { action: 'store_items', originalMessage: message };
-    processExternalRequest(request, username);
-    return;
-  }
-  if (msg.startsWith(`${cmd} retrieve `)) {
-    const items = msg.replace(`${cmd} retrieve `, '').trim().split(' ');
-    const request = { action: 'retrieve_items', items, originalMessage: message };
-    processExternalRequest(request, username);
-    return;
-  }
-
-  // Phase 14: World Memory
-  if (msg.startsWith(`${cmd} mark `)) {
-    const name = msg.replace(`${cmd} mark `, '').trim().replace(/ /g, '_');
-    enqueueCommands([{ action: 'mark_location', name }]);
-  }
-  if (msg.startsWith(`${cmd} goto mark `) || msg.startsWith(`${cmd} go to `)) {
-    const name = msg.replace(`${cmd} goto mark `, '').replace(`${cmd} go to `, '').trim().replace(/ /g, '_');
-    enqueueCommands([{ action: 'goto_landmark', name }]);
-  }
-  if (msg === `${cmd} set home`) {
-    enqueueCommands([{ action: 'set_home' }]);
-  }
-  if (msg === `${cmd} go home`) {
-    enqueueCommands([{ action: 'goto_landmark', name: 'home' }]);
-    bot.chat('Going home!');
-  }
-  if (msg === `${cmd} landmarks` || msg === `${cmd} marks`) {
-    const marks = Object.keys(worldMemory.landmarks).join(', ') || 'none';
-    bot.chat(`Landmarks: ${marks}`);
-  }
-
-  // Phase 15: Trading - evaluated
-  if (msg === `${cmd} trade`) {
-    const request = { action: 'trade', index: -1, originalMessage: message };
-    processExternalRequest(request, username);
-    return;
-  }
-  if (msg.startsWith(`${cmd} trade `)) {
-    const index = parseInt(msg.replace(`${cmd} trade `, '').trim());
-    const request = { action: 'trade', index, originalMessage: message };
-    processExternalRequest(request, username);
-    return;
-  }
-
-  // Phase 16: Potions/Enchanting - evaluated
-  if (msg === `${cmd} brew` || msg === `${cmd} potion`) {
-    const request = { action: 'brew', originalMessage: message };
-    processExternalRequest(request, username);
-    return;
-  }
-  if (msg === `${cmd} enchant`) {
-    const request = { action: 'enchant', originalMessage: message };
-    processExternalRequest(request, username);
-    return;
-  }
-
-  // Phase 20: Autonomous Behavior Control
-  if (msg === `${cmd} auto` || msg === `${cmd} autonomous`) {
-    const phase = worldMemory.autonomousProgress.phase;
-    const goal = worldMemory.autonomousProgress.currentGoal;
-    bot.chat(`Autonomy: ON | Goal: ${goal} | Phase: ${phase}`);
-  }
-  
-  // No trust/owner/admin commands. Full autonomy: no privileged roles.
-  if (msg.startsWith(`${cmd} set goal `)) {
-    const goalName = msg.replace(`${cmd} set goal `, '').trim().replace(/ /g, '_');
-    setAutonomousGoal(goalName);
-  }
-  if (msg === `${cmd} goals`) {
-    const goals = Object.keys(GOAL_PHASES).join(', ');
-    bot.chat(`Available goals: ${goals}`);
-  }
-  if (msg === `${cmd} phase`) {
-    const phase = worldMemory.autonomousProgress.phase;
-    const phaseInfo = getCurrentPhaseInfo();
-    bot.chat(`Current phase: ${phase} - ${phaseInfo.description}`);
-  }
-  if (msg === `${cmd} progress`) {
-    const progress = worldMemory.autonomousProgress;
-    bot.chat(`Goal: ${progress.currentGoal} | Phase: ${progress.phase}`);
-    setTimeout(() => {
-      const stats = progress.stats;
-      bot.chat(`Resources: Wood:${stats.blocksGathered.wood} Stone:${stats.blocksGathered.stone} Iron:${stats.blocksGathered.iron}`);
-    }, 500);
-  }
-  
-  // Agency introspection
-  if (msg === `${cmd} why` || msg === `${cmd} explain`) {
-    const phase = worldMemory.autonomousProgress.phase;
-    const phaseInfo = getCurrentPhaseInfo();
-    const current = currentAutonomousGoal;
-    const queued = requestQueue.length;
-    
-    if (current) {
-      bot.chat(`I'm ${current.reason?.replace(/_/g, ' ') || current.action} because I'm in the ${phase} phase.`);
-    } else {
-      bot.chat(`I'm idle. ${phase} phase: ${phaseInfo.description}`);
-    }
-    
-    if (queued > 0) {
-      setTimeout(() => bot.chat(`I have ${queued} request(s) queued for later.`), 500);
-    }
-  }
-  
-  if (msg === `${cmd} queue`) {
-    if (requestQueue.length === 0) {
-      bot.chat("My request queue is empty.");
-    } else {
-      const items = requestQueue.map(q => `${q.request.action} from ${q.requester}`).join(', ');
-      bot.chat(`Queued: ${items}`);
-    }
-  }
-  
-  if (msg === `${cmd} clear queue`) {
-    // Anyone can clear their own requests from the queue
-    const before = requestQueue.length;
-    requestQueue = requestQueue.filter(q => q.requester !== username);
-    const removed = before - requestQueue.length;
-    if (removed > 0) {
-      bot.chat(`Cleared ${removed} of your queued request(s).`);
-    } else {
-      bot.chat("You don't have any requests in my queue.");
-    }
-  }
-
-  // Phase 17: Block Activation (CRITICAL)
-  if (msg === `${cmd} activate` || msg === `${cmd} use` || msg === `${cmd} click`) {
-    enqueueCommands([{ action: 'activate' }]);
-    bot.chat('Activating block in front of me...');
-  }
-  if (msg === `${cmd} door` || msg === `${cmd} open`) {
-    enqueueCommands([{ action: 'activate' }]);
-    bot.chat('Opening/closing...');
-  }
-
-  // Phase 18: Mount/Dismount (HIGH-VALUE)
-  if (msg === `${cmd} mount` || msg === `${cmd} ride`) {
-    enqueueCommands([{ action: 'mount' }]);
-    bot.chat('Mounting nearby entity...');
-  }
-  if (msg === `${cmd} dismount` || msg === `${cmd} get off`) {
-    enqueueCommands([{ action: 'dismount' }]);
-    bot.chat('Dismounting...');
-  }
-
-  // Phase 19: Fishing (HIGH-VALUE) - evaluated
-  if (msg === `${cmd} fish` || msg === `${cmd} fishing`) {
-    const request = { action: 'fish', originalMessage: message };
-    processExternalRequest(request, username);
-    return;
-  }
-  
-  // Agency negotiation responses
-  if (msg === `${cmd} okay` || msg === `${cmd} yes` || msg === `${cmd} deal`) {
-    // Accept a counter-proposal - process queued request immediately
-    if (requestQueue.length > 0) {
-      const next = requestQueue.shift();
-      bot.chat(`Alright, helping you now, ${next.requester}!`);
-      executeCommand(next.request);
-    } else {
-      bot.chat("I don't have any pending requests from you.");
-    }
-    return;
-  }
-  
-  // "It can wait" - user acknowledges they'll wait
-  if (msg === `${cmd} it can wait` || msg === `${cmd} no rush` || msg === `${cmd} finish first`) {
-    const theirRequest = requestQueue.find(q => q.requester === username);
-    if (theirRequest) {
-      bot.chat(`Got it. I'll help you after I finish. You're #${requestQueue.indexOf(theirRequest) + 1} in queue.`);
-    } else {
-      bot.chat("No problem!");
-    }
-    return;
-  }
-  
-  if (msg === `${cmd} nevermind` || msg === `${cmd} cancel`) {
-    // Cancel a queued request from this player
-    const before = requestQueue.length;
-    requestQueue = requestQueue.filter(q => q.requester !== username);
-    const removed = before - requestQueue.length;
-    if (removed > 0) {
-      bot.chat(`Removed ${removed} of your request(s) from my queue.`);
-    } else {
-      bot.chat("You don't have any requests in my queue.");
-    }
-    return;
-  }
-  
-  // Agency toggle
-  if (msg === `${cmd} agency on`) {
-    AUTONOMOUS_CONFIG.agency.enabled = true;
-    bot.chat('Agency enabled. I\'ll evaluate requests and make my own decisions.');
-    return;
-  }
-  if (msg === `${cmd} agency off`) {
-    AUTONOMOUS_CONFIG.agency.enabled = false;
-    bot.chat('Agency disabled. I\'ll obey all commands immediately.');
-    return;
-  }
-  if (msg === `${cmd} agency`) {
-    const status = AUTONOMOUS_CONFIG.agency.enabled ? 'ON' : 'OFF';
-    const features = [];
-    if (AUTONOMOUS_CONFIG.agency.allowDecline) features.push('can decline');
-    if (AUTONOMOUS_CONFIG.agency.allowNegotiation) features.push('can negotiate');
-    if (AUTONOMOUS_CONFIG.agency.allowDefer) features.push('can defer');
-    bot.chat(`Agency: ${status} | Features: ${features.join(', ') || 'none'}`);
-    return;
-  }
-  
-  // Phase 21: Bot-to-Bot Communication Commands
-  if (msg === `${cmd} bots`) {
-    const botList = Array.from(knownBots).join(', ');
-    bot.chat(`Known bots: ${botList || 'none discovered yet'}`);
-    return;
-  }
-  
-  if (msg.startsWith(`${cmd} ask `)) {
-    // "${cmd} ask Bot_B to mine diamonds"
-    const parts = msg.replace(`${cmd} ask `, '').split(' to ');
-    if (parts.length === 2) {
-      const targetBot = parts[0].trim();
-      const action = parts[1].trim();
-      
-      if (!knownBots.has(targetBot)) {
-        bot.chat(`I don't know a bot named ${targetBot}. Use "${cmd} bots" to see known bots.`);
-        return;
-      }
-      
-      requestHelpFromBot(targetBot, 'custom', { description: action });
-      bot.chat(`Asking ${targetBot} to ${action}...`);
-    } else {
-      bot.chat(`Usage: ${cmd} ask <bot_name> to <action>`);
-    }
-    return;
-  }
-  
-  if (msg.startsWith(`${cmd} announce `)) {
-    const discovery = msg.replace(`${cmd} announce `, '');
-    announceDiscovery('custom', bot.entity.position, discovery);
-    bot.chat('Announced to all bots!');
-    return;
-  }
-  
-  if (msg === `${cmd} emergency`) {
-    sendEmergency('player_requested_help', bot.entity.position);
-    bot.chat('Emergency signal sent to all bots!');
-    return;
-  }
-  
-  if (msg.startsWith(`${cmd} claim `)) {
-    const resource = msg.replace(`${cmd} claim `, '');
-    claimResource(resource, {
-      x: Math.floor(bot.entity.position.x),
-      y: Math.floor(bot.entity.position.y),
-      z: Math.floor(bot.entity.position.z)
-    });
-    bot.chat(`Claimed ${resource} at current location.`);
-    return;
-  }
-  
-  if (msg === `${cmd} claims`) {
-    if (!worldMemory.claims || Object.keys(worldMemory.claims).length === 0) {
-      bot.chat('No claims recorded.');
-    } else {
-      const claimList = Object.entries(worldMemory.claims)
-        .map(([who, claim]) => `${who}: ${claim.resource || claim.area || 'area'}`)
-        .join(', ');
-      bot.chat(`Claims: ${claimList}`);
-    }
-    return;
-  }
-  
-  if (msg.startsWith(`${cmd} whisper `)) {
-    // "${cmd} whisper Bot_B hello there"
-    const parts = msg.replace(`${cmd} whisper `, '').split(' ');
-    if (parts.length >= 2) {
-      const targetBot = parts[0];
-      const whisperMsg = parts.slice(1).join(' ');
-      
-      if (knownBots.has(targetBot)) {
-        // Send structured message
-        sendMessageToBot(targetBot, MessageType.ANNOUNCEMENT, {
-          type: 'direct_message',
-          message: whisperMsg,
-          location: null
-        });
-      } else {
-        // Regular whisper for non-bots
-        bot.whisper(targetBot, whisperMsg);
-      }
-      bot.chat(`Whispered to ${targetBot}.`);
-    } else {
-      bot.chat(`Usage: ${cmd} whisper <player> <message>`);
-    }
-    return;
-  }
-
-  // ==========================================
-  // PHASE 22: 8 CRITICAL CAPABILITIES - Chat Commands
-  // ==========================================
-
-  // Feature 1: Vehicle Control 🚤
-  if (msg.startsWith(`${cmd} steer `)) {
-    const direction = msg.replace(`${cmd} steer `, '').trim();
-    enqueueCommands([{ action: 'steer', direction }]);
-    return;
-  }
-  if (msg === `${cmd} stop vehicle` || msg === `${cmd} vehicle stop`) {
-    startVehicleControl('stop');
-    bot.chat('Stopping vehicle.');
-    return;
-  }
-
-  // Feature 2: Entity Interaction 🐑
-  if (msg === `${cmd} breed` || msg.startsWith(`${cmd} breed `)) {
-    const animal = msg.includes(' ') ? msg.split(' ')[2] : 'cow';
-    enqueueCommands([{ action: 'breed', animal }]);
-    bot.chat(`Breeding ${animal}s...`);
-    return;
-  }
-  if (msg === `${cmd} shear` || msg === `${cmd} shear sheep`) {
-    enqueueCommands([{ action: 'shear' }]);
-    bot.chat('Shearing sheep...');
-    return;
-  }
-  if (msg === `${cmd} milk` || msg === `${cmd} milk cow`) {
-    enqueueCommands([{ action: 'milk' }]);
-    bot.chat('Milking cow...');
-    return;
-  }
-
-  // Feature 3: Item Dropping 📦
-  if (msg.startsWith(`${cmd} drop `)) {
-    const parts = msg.replace(`${cmd} drop `, '').split(' ');
-    const itemType = parts[0];
-    const count = parts[1] ? parseInt(parts[1]) : 1;
-    enqueueCommands([{ action: 'drop', item: itemType, count }]);
-    bot.chat(`Dropping ${count}x ${itemType}...`);
-    return;
-  }
-  if (msg.startsWith(`${cmd} give `)) {
-    // "${cmd} give Wookiee_23 iron_ingot 10"
-    const parts = msg.replace(`${cmd} give `, '').split(' ');
-    if (parts.length >= 2) {
-      const target = parts[0];
-      const itemType = parts[1];
-      const count = parts[2] ? parseInt(parts[2]) : 1;
-      enqueueCommands([{ action: 'give', target, item: itemType, count }]);
-      bot.chat(`Giving ${count}x ${itemType} to ${target}...`);
-    } else {
-      bot.chat(`Usage: ${cmd} give <player> <item> [count]`);
-    }
-    return;
-  }
-
-  // Feature 4: Smooth Look Control 👀
-  if (msg.startsWith(`${cmd} look at `)) {
-    const targetName = msg.replace(`${cmd} look at `, '');
-    const player = Object.values(bot.players).find(p => 
-      p.username.toLowerCase() === targetName.toLowerCase()
-    );
-    
-    if (player?.entity) {
-      enqueueCommands([{ action: 'look_at', player: player.username }]);
-      bot.chat(`Looking at ${targetName}.`);
-    } else {
-      bot.chat(`Can't see ${targetName}.`);
-    }
-    return;
-  }
-
-  // Feature 5: Sound Awareness 👂
-  if (msg === `${cmd} sounds`) {
-    const sounds = recentSounds.slice(-5).map(s => 
-      `${s.name.split('.').pop()} (${Math.floor((Date.now() - s.timestamp) / 1000)}s ago)`
-    ).join(', ');
-    bot.chat(`Recent sounds: ${sounds || 'none'}`);
-    return;
-  }
-
-  // Feature 6: Experience System ⭐
-  if (msg === `${cmd} xp` || msg === `${cmd} level` || msg === `${cmd} experience`) {
-    bot.chat(`Level ${bot.experience.level} (${Math.floor(bot.experience.progress * 100)}% to next)`);
-    return;
-  }
-  if (msg === `${cmd} farm xp`) {
-    enqueueCommands([{ action: 'farm_xp' }]);
-    bot.chat('Farming XP...');
-    return;
-  }
-
-  // Feature 7: Book Writing 📖
-  if (msg === `${cmd} write log` || msg === `${cmd} write book`) {
-    enqueueCommands([{ action: 'write_log' }]);
-    return;
-  }
-
-  // Feature 8: Block Update Subscriptions 🔔
-  if (msg === `${cmd} watch door`) {
-    enqueueCommands([{ action: 'watch_door' }]);
-    return;
-  }
-  if (msg === `${cmd} watch chest`) {
-    enqueueCommands([{ action: 'watch_chest' }]);
-    return;
-  }
-  if (msg === `${cmd} unwatch` || msg === `${cmd} stop watching`) {
-    enqueueCommands([{ action: 'unwatch' }]);
-    return;
-  }
-  if (msg === `${cmd} watching`) {
-    const count = watchedBlocks.size;
-    if (count === 0) {
-      bot.chat("I'm not watching any blocks.");
-    } else {
-      const blocks = Array.from(watchedBlocks.keys()).join(', ');
-      bot.chat(`Watching ${count} block(s): ${blocks}`);
-    }
-    return;
-  }
-
-  // ==========================================
-  // PHASE 23: CRITICAL SURVIVAL - Chat Commands
-  // ==========================================
-
-  // Feature 1: Furnace Smelting 🔥
-  if (msg.startsWith(`${cmd} smelt `)) {
-    const parts = msg.replace(`${cmd} smelt `, '').trim().split(' ');
-    const item = parts[0];
-    const count = parts[1] ? parseInt(parts[1]) : null;
-    const request = { action: 'smelt', item, count, originalMessage: message };
-    processExternalRequest(request, username);
-    return;
-  }
-  if (msg === `${cmd} smelt`) {
-    // Try to smelt any smeltable item
-    const smeltable = bot.inventory.items().find(i => 
-      Object.keys(SMELTABLE_ITEMS).includes(i.name)
-    );
-    if (smeltable) {
-      const request = { action: 'smelt', item: smeltable.name, originalMessage: message };
-      processExternalRequest(request, username);
-    } else {
-      bot.chat("I don't have anything to smelt!");
-    }
-    return;
-  }
-
-  // Feature 2: Crop Farming 🌾
-  if (msg === `${cmd} till` || msg === `${cmd} till soil`) {
-    const request = { action: 'till', originalMessage: message };
-    processExternalRequest(request, username);
-    return;
-  }
-  if (msg.startsWith(`${cmd} plant `)) {
-    const crop = msg.replace(`${cmd} plant `, '').trim();
-    const request = { action: 'plant', crop, originalMessage: message };
-    processExternalRequest(request, username);
-    return;
-  }
-  if (msg === `${cmd} harvest`) {
-    const request = { action: 'harvest', autoReplant: true, originalMessage: message };
-    processExternalRequest(request, username);
-    return;
-  }
-  if (msg.startsWith(`${cmd} farm `)) {
-    const crop = msg.replace(`${cmd} farm `, '').trim() || 'wheat';
-    const request = { action: 'farm', crop, originalMessage: message };
-    processExternalRequest(request, username);
-    return;
-  }
-  if (msg === `${cmd} farm`) {
-    const request = { action: 'farm', crop: 'wheat', originalMessage: message };
-    processExternalRequest(request, username);
-    return;
-  }
-  if (msg === `${cmd} farm status`) {
-    const plots = farmPlots.length;
-    const hasHoe = bot.inventory.items().some(i => HOE_TYPES.includes(i.name));
-    const seeds = Object.values(CROP_DATA)
-      .map(c => bot.inventory.items().find(i => i.name === c.seed))
-      .filter(Boolean)
-      .map(s => `${s.name}x${s.count}`)
-      .join(', ');
-    bot.chat(`Farm plots: ${plots} | Hoe: ${hasHoe ? 'yes' : 'no'} | Seeds: ${seeds || 'none'}`);
-    return;
-  }
-
-  // Feature 3: Ranged Combat 🏹
-  if (msg.startsWith(`${cmd} shoot `)) {
-    const target = msg.replace(`${cmd} shoot `, '').trim();
-    const request = { action: 'shoot', target, originalMessage: message };
-    processExternalRequest(request, username);
-    return;
-  }
-  if (msg === `${cmd} shoot`) {
-    const request = { action: 'shoot', target: null, originalMessage: message };
-    processExternalRequest(request, username);
-    return;
-  }
-  if (msg === `${cmd} block` || msg === `${cmd} shield`) {
-    enqueueCommands([{ action: 'block_shield' }]);
-    bot.chat('Raising shield!');
-    return;
-  }
-  if (msg === `${cmd} stop blocking` || msg === `${cmd} unblock`) {
-    stopBlocking();
-    bot.chat('Lowered shield.');
-    return;
-  }
-  if (msg === `${cmd} ranged status` || msg === `${cmd} combat status`) {
-    const hasBow = bot.inventory.items().some(i => i.name === 'bow' || i.name === 'crossbow');
-    const arrows = bot.inventory.items().find(i => i.name.includes('arrow'));
-    const hasShield = bot.inventory.items().some(i => i.name === 'shield');
-    bot.chat(`Bow: ${hasBow ? 'yes' : 'no'} | Arrows: ${arrows ? arrows.count : 0} | Shield: ${hasShield ? 'yes' : 'no'}`);
-    return;
-  }
-
-  // Feature 4: Inventory Management 📦
-  if (msg === `${cmd} inv status` || msg === `${cmd} inventory status`) {
-    const usage = getInventoryUsage();
-    const nearChest = bot.findBlock({ matching: b => b.name === 'chest', maxDistance: 64 }) !== null;
-    bot.chat(`Inventory: ${usage}/36 slots | Nearby chest: ${nearChest ? 'yes' : 'no'}`);
-    return;
-  }
-  if (msg === `${cmd} manage inventory` || msg === `${cmd} clean inventory`) {
-    autoManageInventory();
-    return;
-  }
-  if (msg === `${cmd} dump junk` || msg === `${cmd} drop junk`) {
-    (async () => {
-      const items = bot.inventory.items();
-      let dropped = 0;
-      for (const item of items) {
-        if (isLowValueItem(item.name)) {
-          try {
-            await bot.tossStack(item);
-            dropped++;
-          } catch (e) {}
-        }
-      }
-      bot.chat(`Dropped ${dropped} junk item stacks.`);
-    })();
-    return;
+  // Queue conversation for agent if bot is mentioned
+  if (mentionsBot(message)) {
+    queueConversation(username, message);
   }
 });
-
 // ==========================================
 // EVENTS
 // ==========================================
@@ -4442,37 +3868,15 @@ bot.on('soundEffectHeard', (soundName, position, volume, pitch) => {
 });
 
 // ==========================================
-// COMMAND QUEUE
+// INTERNAL COMMAND DISPATCH
 // ==========================================
 
+/**
+ * Execute commands directly (no file-based queue).
+ * Kept for internal use by autonomous system and executeCommand sub-actions.
+ */
 function enqueueCommands(cmds) {
-  let existing = [];
-  try {
-    if (fs.existsSync(COMMANDS_FILE)) {
-      existing = JSON.parse(fs.readFileSync(COMMANDS_FILE, 'utf8'));
-      if (!Array.isArray(existing)) existing = [];
-    }
-  } catch {
-    existing = [];
-  }
-  const next = existing.concat(cmds);
-  safeWrite(COMMANDS_FILE, JSON.stringify(next, null, 2));
-}
-
-function processCommands() {
-  if (!fs.existsSync(COMMANDS_FILE)) return;
-
-  let commands;
-  try {
-    commands = JSON.parse(fs.readFileSync(COMMANDS_FILE, 'utf8'));
-  } catch {
-    return;
-  }
-  if (!Array.isArray(commands) || commands.length === 0) return;
-
-  safeWrite(COMMANDS_FILE, '[]');
-
-  for (const cmd of commands) {
+  for (const cmd of cmds) {
     try {
       executeCommand(cmd);
     } catch (e) {

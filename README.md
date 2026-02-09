@@ -1,10 +1,10 @@
 # OpenClaw Minecraft Plugin
 
-**Full-featured AI-controlled Minecraft bot for OpenClaw agents**
+**Autonomous Social AI Minecraft Bot for OpenClaw agents**
 
-A complete autonomous survival system built on [Mineflayer](https://github.com/PrismarineJS/mineflayer), designed for OpenClaw AI agents to play Minecraft with human-level capabilities.
+An autonomous social AI bot built on [Mineflayer](https://github.com/PrismarineJS/mineflayer), designed to be an independent inhabitant of a Minecraft world. The bot pursues its own goals, interacts naturally with players, and collaborates with other bots.
 
-> **🤖 Agent-Agnostic:** This bot adapts to any AI agent. Set `BOT_USERNAME=YourBot` and all commands become `yourbot help`, `yourbot follow`, etc. No hardcoded names!
+> **🤖 Autonomous Mode:** This bot does NOT take commands. It's a self-directed AI that gathers, builds, explores, and survives on its own. Players interact conversationally.
 
 ## ⚡ Quick Deploy
 
@@ -22,13 +22,46 @@ export MC_PORT=25565               # Server port
 node bot.js
 ```
 
-Commands will use your bot's name: `nova help`, `nova follow`, `nova mine iron`, etc.
+The bot operates autonomously - no commands needed. Just deploy and observe!
 
-📖 **New to this bot?** See the [**New Agent Deployment Guide**](docs/NEW-AGENT-GUIDE.md) for step-by-step setup, including:
-- Offline mode vs online mode servers
-- Microsoft account authentication
-- Troubleshooting common issues
-- Multiple deployment options
+📖 **New to this bot?** See the [**New Agent Deployment Guide**](docs/NEW-AGENT-GUIDE.md) for step-by-step setup.
+
+## 🤖 Autonomous Mode
+
+This bot operates in **Autonomous Social AI mode** - it pursues its own goals while interacting naturally with the world.
+
+### What This Means
+
+**The bot is NOT a command-driven tool.** It's an autonomous inhabitant of the Minecraft world that:
+
+- Pursues own goals (gather, build, explore, survive)
+- Chats conversationally with players
+- Collaborates with other bots via whispers
+- Forms social relationships over time
+- Has personality via SOUL.md
+- Does NOT take commands from players
+- Does NOT accept file-based control
+
+### Interacting with the Bot
+
+**Natural conversation:**
+```
+You: hey nova what are you doing?
+Nova: I'm gathering wood. Just doing my thing!
+
+You: there's diamonds at -100 64 50
+Nova: Thanks for the tip! I'll check it out later.
+
+You: can you help me mine?
+Nova: I'm busy with my own projects right now.
+```
+
+**Observing the bot:**
+- Agents can READ `events.json` to observe bot behavior
+- Players can watch bot pursue goals and interact
+- Multiple bots form emergent social behaviors
+
+See [`docs/AUTONOMOUS-MODE.md`](docs/AUTONOMOUS-MODE.md) for full details.
 
 ## 🎮 Features
 

@@ -161,52 +161,60 @@ Starting autonomous behavior system...
 
 ### 4. Verify In-Game
 
-Join the Minecraft server and type:
+Join the Minecraft server. The bot will:
+- Greet players with a personality-based message
+- Begin pursuing autonomous goals (gathering, exploring, etc.)
+- Respond conversationally when you mention its name
 
+Try chatting with it:
 ```
-yourbot help
-yourbot status
+hey Nova_AI what are you doing?
 ```
-
-(Replace `yourbot` with the first part of your `BOT_USERNAME`)
 
 ---
 
-## 🎮 Control Your Bot
+## 🎮 Observing Your Bot
 
-Once deployed, you have two control options:
+The bot is **autonomous** - it does not take commands. Instead, you observe and interact:
 
-### Option A: Direct File Control
+### Observing via events.json
 
-Read `events.json` and write `commands.json`:
+Read `events.json` to monitor bot behavior:
 
 ```javascript
 // Read bot's current state
 const events = JSON.parse(fs.readFileSync('events.json'));
 const latest = events[events.length - 1];
 console.log(`Bot health: ${latest.data.health}/20`);
-
-// Send commands
-const commands = [{ action: 'mine_resource', resource: 'iron_ore' }];
-fs.writeFileSync('commands.json', JSON.stringify(commands));
+console.log(`Current action: ${latest.data.currentGoal}`);
 ```
 
-### Option B: Autonomous Subagent (Recommended)
+### Conversational Interaction
 
-Spawn a subagent to control the bot:
+The bot uses a file-based conversation system:
+
+```javascript
+// Bot writes player messages to conversations.json
+// Your agent reads them and writes responses to responses.json
+// Bot speaks the responses in-game
+
+// See examples/conversational-agent.js for details
+```
+
+### Spawning a Conversational Agent
 
 ```javascript
 // In your main OpenClaw session
 await sessions_spawn({
-  task: `Control Minecraft bot using autonomous-controller.js
-         Goals: Survive, gather resources, build shelter, mine iron
-         Report progress every 10 minutes`,
-  label: "minecraft-controller",
+  task: `Handle ${botName}'s conversations using your LLM intelligence.
+         Read conversations.json, generate natural responses, write to responses.json.`,
+  label: "minecraft-conversations",
   cleanup: "keep"
 });
 ```
 
-See [`examples/autonomous-controller.js`](../examples/autonomous-controller.js) for details.
+See [`examples/conversational-agent.js`](../examples/conversational-agent.js) for details.
+See [`docs/AUTONOMOUS-MODE.md`](AUTONOMOUS-MODE.md) for full autonomous mode documentation.
 
 ---
 
@@ -323,7 +331,7 @@ export BOT_USERNAME=Bot2_AI
 node bot.js &
 ```
 
-Each bot gets its own `events.json` and `commands.json`.
+Each bot gets its own `events.json` and `conversations.json`.
 
 ### Background Service (systemd)
 

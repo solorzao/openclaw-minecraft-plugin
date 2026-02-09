@@ -501,7 +501,7 @@ const AUTONOMOUS_CONFIG = {
   enabled: true,  // Re-enabled after fixing infinite gather_wood loop bug (2026-02-08)
   defaultGoal: 'thriving_survivor',
   checkIntervalMs: 10000,
-  announceActions: true,
+  announceActions: false,  // Disabled - internal goals are silent
   helpNearbyPlayers: true,
   helpRadius: 20,
   // Agency configuration - TRUE AUTONOMY
@@ -1775,23 +1775,21 @@ bot.on('spawn', () => {
     }
   }, 3000);
   
-  // Phase 21: Simple greeting - let players know a bot joined
+  // AUTONOMOUS MODE: Silent spawn - bot is an inhabitant, not a visitor
+  // No greeting on spawn - let conversations happen naturally
   setTimeout(() => {
     const otherPlayers = Object.values(bot.players).filter(p => p.username !== bot.username);
     
     if (otherPlayers.length > 0) {
-      // Someone else is here - say hello
-      bot.chat(generateSpawnGreeting());
-      logEvent('bot_greeted', { username: bot.username, playersOnline: otherPlayers.length });
-      
       // Discover other bots via whispers (not public chat spam)
       otherPlayers.forEach(player => {
         if (player.username && (player.username.includes('Bot') || player.username.includes('_AI'))) {
           registerBot(player.username);
         }
       });
+      logEvent('spawn_silent', { playersOnline: otherPlayers.length });
     } else {
-      // Alone on the server - silent spawn
+      // Alone on the server
       logEvent('spawn_silent', { reason: 'no_other_players' });
     }
   }, 5000);  // Wait 5s to observe first
@@ -2028,7 +2026,7 @@ async function craftItem(itemName, count = 1) {
   const recipes = bot.recipesFor(item.id);
   if (!recipes || recipes.length === 0) {
     logEvent('craft_failed', { item: itemName, reason: 'no_recipe' });
-    bot.chat(`No recipe for ${itemName} with current items!`);
+    // Silent fail - bot doesn't have materials yet
     return false;
   }
   
@@ -2065,7 +2063,7 @@ async function craftItem(itemName, count = 1) {
     
     if (!table) {
       logEvent('craft_failed', { item: itemName, reason: 'no_crafting_table' });
-      bot.chat('Need a crafting table!');
+      // Silent fail - bot will handle getting a crafting table autonomously
       return false;
     }
     
@@ -2600,7 +2598,7 @@ async function buildStructure(templateName, blockType) {
   );
   
   if (!buildBlock || buildBlock.count < template.blocks.length) {
-    bot.chat(`Need at least ${template.blocks.length} blocks to build ${templateName}!`);
+    // Silent fail - bot will gather materials autonomously
     return false;
   }
   
@@ -2955,7 +2953,7 @@ async function useEnchantingTable() {
     // Check lapis
     const lapis = bot.inventory.items().find(i => i.name === 'lapis_lazuli');
     if (!lapis) {
-      bot.chat('Need lapis lazuli!');
+      // Silent fail - enchanting requires lapis
       table.close();
       return false;
     }
@@ -3535,7 +3533,7 @@ function setAutonomousGoal(goalName) {
   worldMemory.autonomousProgress.tasksCompleted = [];
   saveWorldMemory();
   
-  bot.chat(`Goal set to: ${goalName}. Starting phase: ${worldMemory.autonomousProgress.phase}`);
+  // Silent goal change - no need to announce internal state
   logEvent('autonomous_goal_changed', { goal: goalName });
   return true;
 }
@@ -4876,7 +4874,7 @@ async function smeltItem(itemName, count = null) {
     }
     
     if (!furnace) {
-      bot.chat('No furnace nearby and cannot craft one (need 8 cobblestone)!');
+      // Silent fail - bot will gather cobblestone and craft furnace autonomously
       logEvent('smelt_failed', { reason: 'no_furnace' });
       return false;
     }
@@ -4899,7 +4897,7 @@ async function smeltItem(itemName, count = null) {
   }
   
   if (!fuelItem) {
-    bot.chat('No fuel available! Need coal, wood, or other fuel items.');
+    // Silent fail - bot will gather fuel autonomously
     logEvent('smelt_failed', { reason: 'no_fuel' });
     return false;
   }

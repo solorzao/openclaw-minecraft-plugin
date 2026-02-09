@@ -90,7 +90,7 @@ All in `/data/minecraft-bot/`:
    ]
    ```
 
-4. **`state.json`** - Bot writes current state here (polled by OpenClaw)
+4. **`state.json`** - Bot writes current state + world perception here (polled by OpenClaw)
    ```json
    {
      "username": "Nova_AI",
@@ -99,8 +99,25 @@ All in `/data/minecraft-bot/`:
      "food": 15,
      "inventory": [{"name": "oak_log", "count": 17}],
      "currentGoal": "gather_wood",
+     "perception": {
+       "lookingAt": {"type": "oak_log", "distance": 3},
+       "blocksNearby": {
+         "oak_log": 45,
+         "stone": 120,
+         "iron_ore": 3,
+         "coal_ore": 8
+       },
+       "entities": [
+         {"type": "player", "name": "Wookiee_23", "distance": 5, "direction": "west"},
+         {"type": "creeper", "distance": 12, "direction": "north"}
+       ],
+       "features": ["forest", "clearing", "stone_cliff_east"],
+       "lightLevel": 12,
+       "timeOfDay": "dusk",
+       "biome": "forest"
+     },
      "nearbyPlayers": ["Wookiee_23"],
-     "nearbyHostiles": [],
+     "nearbyHostiles": [{"type": "creeper", "distance": 12}],
      "timestamp": "2026-02-08T21:30:06Z"
    }
    ```
@@ -135,9 +152,62 @@ Bot should poll `commands.json` and execute actions. Format:
 
 After executing, clear the command from the file.
 
-### 4. State Broadcasting
+### 4. State Broadcasting + World Perception
 
-Every 3-5 seconds, write current state to `state.json` so OpenClaw can check status.
+Every 3-5 seconds, write current state + rich world data to `state.json`:
+
+**Perception data includes:**
+- **lookingAt**: What block/entity is in the bot's line of sight (ray trace)
+- **blocksNearby**: Count of all block types within 16-32 blocks (queryable via Mineflayer)
+- **entities**: All entities (players, mobs, items) with distance + direction
+- **features**: Detected landmarks ("cave_entrance", "village", "ravine", "ocean")
+- **lightLevel**: Current light at bot position (0-15)
+- **timeOfDay**: "dawn", "day", "dusk", "night"
+- **biome**: Current biome from world data
+
+**Implementation:**
+```javascript
+// In bot.js
+function generatePerception() {
+  const nearbyBlocks = bot.findBlocks({
+    matching: (block) => block.name !== 'air',
+    maxDistance: 32,
+    count: 1000
+  });
+  
+  // Count block types
+  const blockCounts = {};
+  nearbyBlocks.forEach(pos => {
+    const block = bot.blockAt(pos);
+    blockCounts[block.name] = (blockCounts[block.name] || 0) + 1;
+  });
+  
+  // Detect entities
+  const entities = Object.values(bot.entities)
+    .filter(e => e.position)
+    .map(e => ({
+      type: e.type,
+      name: e.name || e.username,
+      distance: Math.floor(bot.entity.position.distanceTo(e.position)),
+      direction: getDirection(bot.entity.position, e.position)
+    }));
+  
+  // Ray trace what we're looking at
+  const lookingAt = bot.blockAtCursor(32);
+  
+  return {
+    lookingAt: lookingAt ? {type: lookingAt.name, distance: Math.floor(bot.entity.position.distanceTo(lookingAt.position))} : null,
+    blocksNearby: blockCounts,
+    entities: entities,
+    features: detectFeatures(nearbyBlocks),
+    lightLevel: bot.blockAt(bot.entity.position)?.light || 0,
+    timeOfDay: getTimeOfDay(bot.time.timeOfDay),
+    biome: bot.blockAt(bot.entity.position)?.biome?.name || 'unknown'
+  };
+}
+```
+
+This gives OpenClaw **complete situational awareness** without screenshots - all structured data!
 
 ---
 
@@ -210,8 +280,27 @@ Node.js implementation that:
 ✅ **Natural conversation** - OpenClaw responds in real-time, feels alive
 ✅ **Full capabilities** - Bot can mine, craft, build (Nova controls it)
 ✅ **Autonomous when idle** - Bot continues survival goals when not chatting
-✅ **Context-aware** - Nova sees health, inventory, nearby players when responding
+✅ **Complete situational awareness** - Structured world data (blocks, entities, light, biome)
+✅ **No screenshots needed** - All world info is queryable via Mineflayer APIs
+✅ **Fast & efficient** - Structured JSON is tiny compared to images
 ✅ **Unified personality** - Nova's SOUL.md applies to all interactions
+
+### Why Structured Data > Screenshots
+
+**Structured world perception:**
+- ⚡ Fast to generate & parse (milliseconds)
+- 📊 Complete & queryable (exact block counts, entity positions)
+- 💾 Tiny file size (~5-10KB JSON vs 500KB+ PNG)
+- 🎯 Precise (exact distances, coordinates, block types)
+- 🔍 Filterable (find specific ores, mobs, features)
+
+**Screenshots would require:**
+- Vision model inference (slow, expensive)
+- Ambiguous interpretation ("is that iron or stone?")
+- Large files (bandwidth/storage issues)
+- Can't see through walls / underground
+
+Minecraft world data is **already structured** - we just expose it to OpenClaw!
 
 ---
 

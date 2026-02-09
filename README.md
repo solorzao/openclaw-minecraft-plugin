@@ -255,12 +255,42 @@ Examples below use `{bot}` as a placeholder for your bot's name:
 
 ## 🎮 For OpenClaw Agents
 
-### Spawning a Bot
+### Recommended: Autonomous Subagent Controller (Pattern 2)
+
+Spawn a subagent to autonomously control the bot:
 
 ```javascript
-// In your OpenClaw session:
-const { spawn } = require('child_process');
+// In your OpenClaw main session:
+await sessions_spawn({
+  task: `Control the Minecraft bot autonomously using examples/autonomous-controller.js
+         
+         Goals: Survive, gather resources (wood → stone → iron), build shelter, progress to iron tools.
+         Report progress every 10 minutes.`,
+  label: "minecraft-controller",
+  cleanup: "keep"  // Run indefinitely
+});
 
+// Check progress later
+const history = await sessions_history("minecraft-controller");
+```
+
+**Why this pattern?**
+- ✅ Fully autonomous - frees up your main session
+- ✅ Uses subagent's token budget, not yours
+- ✅ Periodic check-ins keep you informed
+- ✅ Can run indefinitely
+
+📖 **See [`examples/autonomous-controller.js`](examples/autonomous-controller.js) for full implementation**
+
+---
+
+### Alternative: Direct Control (Pattern 1)
+
+Control the bot directly from your main session:
+
+```javascript
+// Spawn the bot process
+const { spawn } = require('child_process');
 const bot = spawn('node', ['bot.js'], {
   cwd: '/path/to/openclaw-minecraft-plugin',
   detached: true

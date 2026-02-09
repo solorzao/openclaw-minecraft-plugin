@@ -889,6 +889,26 @@ let autonomousGoalTimeout = null;  // Safety timeout to clear stuck goals
 const AUTONOMOUS_ATTEMPT_COOLDOWN_MS = 30000;  // 30 seconds between new goal attempts
 const AUTONOMOUS_GOAL_TIMEOUT_MS = 120000;  // 2 minutes max for any autonomous goal
 
+// Action history for AI controller context
+let actionHistory = [];
+const MAX_ACTION_HISTORY = 20;
+
+// AI-settable persistent objective (survives across command cycles)
+let aiObjective = null;  // { goal, reason, steps, setAt }
+
+function recordAction(action, params, result, detail) {
+  actionHistory.push({
+    action,
+    params: params || {},
+    result,  // 'success', 'failed', 'timeout', 'interrupted'
+    detail: detail || null,
+    timestamp: Date.now()
+  });
+  if (actionHistory.length > MAX_ACTION_HISTORY) {
+    actionHistory.shift();
+  }
+}
+
 // FIX: Clear autonomous goal state (used by multiple places)
 function clearAutonomousGoalState(reason = 'cleared') {
   if (autonomousGoalTimeout) {
@@ -896,11 +916,23 @@ function clearAutonomousGoalState(reason = 'cleared') {
     autonomousGoalTimeout = null;
   }
   if (autonomousGoalBusy || currentAutonomousGoal) {
-    logEvent('autonomous_goal_cleared', { 
-      reason, 
+    logEvent('autonomous_goal_cleared', {
+      reason,
       wasGoal: currentAutonomousGoal?.action,
-      wasBusy: autonomousGoalBusy 
+      wasBusy: autonomousGoalBusy
     });
+    // Record action outcome based on clear reason
+    if (currentAutonomousGoal) {
+      const resultMap = {
+        'goal_reached': 'success',
+        'non_pathfinder_complete': 'success',
+        'timeout': 'timeout',
+        'error': 'failed',
+        'player_command': 'interrupted'
+      };
+      const result = resultMap[reason] || 'interrupted';
+      recordAction(currentAutonomousGoal.action, currentAutonomousGoal, result, `cleared: ${reason}`);
+    }
   }
   currentAutonomousGoal = null;
   autonomousGoalBusy = false;
@@ -1639,6 +1671,19 @@ function loadWorldMemory() {
           }
         };
       }
+
+      // Restore persisted AI objective and action history
+      if (worldMemory.aiObjective) {
+        aiObjective = worldMemory.aiObjective;
+      }
+      if (worldMemory.actionHistory) {
+        actionHistory = worldMemory.actionHistory;
+      }
+
+      // Initialize AI notes store if missing
+      if (!worldMemory.aiNotes) {
+        worldMemory.aiNotes = {};
+      }
     }
   } catch (err) {
     console.error('Failed to load world memory:', err);
@@ -1653,6 +1698,8 @@ function saveWorldMemory() {
     // Phase 21: Save known bots
     worldMemory.knownBots = Array.from(knownBots);
     worldMemory.botRelationships = botRelationships;
+    worldMemory.aiObjective = aiObjective;
+    worldMemory.actionHistory = actionHistory;
     fs.writeFileSync(WORLD_MEMORY_FILE, JSON.stringify(worldMemory, null, 2));
   } catch (err) {
     console.error('Failed to save world memory:', err);
@@ -1812,7 +1859,11 @@ bot.on('spawn', () => {
         nearbyPlayers,
         nearbyHostiles: hostiles,
         perception: generatePerception(),
-        worldMemory
+        worldMemory: getCompactWorldMemory(),
+        actionHistory,
+        objective: aiObjective,
+        craftableItems: getCraftableItems(),
+        autonomousPhase: worldMemory.autonomousProgress?.phase || null
       };
 
       safeWrite(STATE_FILE, JSON.stringify(state, null, 2));
@@ -1839,9 +1890,11 @@ bot.on('spawn', () => {
       for (const cmd of cmds) {
         try {
           executeCommand(cmd);
+          recordAction(cmd.action, cmd, 'success', `openclaw command: ${cmd.action}`);
         } catch (e) {
           console.error('OpenClaw command failed:', cmd, e);
           logEvent('openclaw_command_error', { cmd, error: String(e) });
+          recordAction(cmd.action, cmd, 'failed', `error: ${e.message || String(e)}`);
         }
       }
     } catch (e) {
@@ -2105,6 +2158,49 @@ async function cookFood() {
 // ==========================================
 
 const mcData = require('minecraft-data')('1.20.1');  // Adjust version as needed
+
+function getCompactWorldMemory() {
+  return {
+    home: worldMemory.home,
+    landmarks: Object.keys(worldMemory.landmarks || {}),
+    landmarkDetails: worldMemory.landmarks || {},
+    chests: (worldMemory.chests || []).map(c => ({
+      position: c.position,
+      lastUpdated: c.lastUpdated
+    })),
+    phase: worldMemory.autonomousProgress?.phase || 'survival',
+    currentGoal: worldMemory.autonomousProgress?.currentGoal || null,
+    stats: worldMemory.autonomousProgress?.stats || {},
+    aiNotes: worldMemory.aiNotes || {},
+    knownBots: worldMemory.knownBots || [],
+    farmPlots: (worldMemory.farmPlots || []).map(p => ({
+      position: p.position,
+      crop: p.crop
+    }))
+  };
+}
+
+function getCraftableItems() {
+  try {
+    const craftable = [];
+    const checked = new Set();
+    for (const [name, item] of Object.entries(mcData.itemsByName)) {
+      if (checked.has(item.id)) continue;
+      checked.add(item.id);
+      try {
+        const recipes = bot.recipesFor(item.id);
+        if (recipes && recipes.length > 0) {
+          craftable.push({ item: name, count: recipes.length });
+        }
+      } catch (e) {
+        // Some items may error - skip
+      }
+    }
+    return craftable;
+  } catch (e) {
+    return [];
+  }
+}
 
 async function craftItem(itemName, count = 1) {
   const item = mcData.itemsByName[itemName];
@@ -4919,6 +5015,74 @@ async function executeCommand(cmd) {
     // Feature 4: Inventory Management 📦
     case 'manage_inventory': {
       await autoManageInventory();
+      return;
+    }
+
+    // OpenClaw: AI controller objective persistence
+    case 'set_objective': {
+      aiObjective = {
+        goal: cmd.goal,
+        reason: cmd.reason || null,
+        steps: cmd.steps || [],
+        setAt: Date.now()
+      };
+      logEvent('objective_set', aiObjective);
+      return;
+    }
+
+    case 'clear_objective': {
+      logEvent('objective_cleared', { was: aiObjective?.goal });
+      aiObjective = null;
+      return;
+    }
+
+    case 'write_memory': {
+      // AI controller stores a persistent note
+      // cmd.key: string key, cmd.value: any JSON-serializable value
+      if (!cmd.key || typeof cmd.key !== 'string') {
+        logEvent('invalid_memory_command', { action: 'write_memory', key: cmd.key });
+        return;
+      }
+      if (!worldMemory.aiNotes) worldMemory.aiNotes = {};
+      worldMemory.aiNotes[cmd.key] = {
+        value: cmd.value,
+        updatedAt: Date.now()
+      };
+      // Evict oldest notes if over limit (keep 100 most recent)
+      const MAX_AI_NOTES = 100;
+      const noteKeys = Object.keys(worldMemory.aiNotes);
+      if (noteKeys.length > MAX_AI_NOTES) {
+        const sorted = noteKeys.sort((a, b) =>
+          (worldMemory.aiNotes[a].updatedAt || 0) - (worldMemory.aiNotes[b].updatedAt || 0)
+        );
+        const toRemove = sorted.slice(0, noteKeys.length - MAX_AI_NOTES);
+        for (const k of toRemove) delete worldMemory.aiNotes[k];
+      }
+      saveWorldMemory();
+      logEvent('ai_memory_write', { key: cmd.key });
+      return;
+    }
+
+    case 'read_memory': {
+      // No-op as a command — AI reads memory via state.json
+      // But useful to log that the AI explicitly requested it
+      if (!cmd.key || typeof cmd.key !== 'string') {
+        logEvent('invalid_memory_command', { action: 'read_memory', key: cmd.key });
+        return;
+      }
+      logEvent('ai_memory_read', { key: cmd.key, found: !!worldMemory.aiNotes?.[cmd.key] });
+      return;
+    }
+
+    case 'delete_memory': {
+      if (!cmd.key || typeof cmd.key !== 'string') {
+        logEvent('invalid_memory_command', { action: 'delete_memory', key: cmd.key });
+        return;
+      }
+      const existed = !!worldMemory.aiNotes?.[cmd.key];
+      if (worldMemory.aiNotes) delete worldMemory.aiNotes[cmd.key];
+      saveWorldMemory();
+      logEvent('ai_memory_delete', { key: cmd.key, existed });
       return;
     }
 

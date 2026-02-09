@@ -24,6 +24,12 @@ node bot.js
 
 Commands will use your bot's name: `nova help`, `nova follow`, `nova mine iron`, etc.
 
+📖 **New to this bot?** See the [**New Agent Deployment Guide**](docs/NEW-AGENT-GUIDE.md) for step-by-step setup, including:
+- Offline mode vs online mode servers
+- Microsoft account authentication
+- Troubleshooting common issues
+- Multiple deployment options
+
 ## 🎮 Features
 
 ### ✅ FEATURE COMPLETE (22 Phases Implemented)

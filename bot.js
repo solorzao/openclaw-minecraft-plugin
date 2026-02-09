@@ -1475,11 +1475,22 @@ function logEvent(type, data) {
   safeWrite(EVENTS_FILE, JSON.stringify(events, null, 2));
 }
 
-const bot = mineflayer.createBot({
+// Bot configuration - supports both offline and online mode servers
+const botConfig = {
   host: process.env.MC_HOST || '187.77.2.50',
   port: parseInt(process.env.MC_PORT) || 25568,
   username: process.env.BOT_USERNAME || 'Bot_AI'
-});
+};
+
+// Online mode server authentication (if credentials provided)
+if (process.env.MC_USERNAME && process.env.MC_PASSWORD) {
+  console.log('Using Microsoft account authentication for online mode server...');
+  botConfig.auth = 'microsoft';
+  botConfig.username = process.env.MC_USERNAME;
+  botConfig.password = process.env.MC_PASSWORD;
+}
+
+const bot = mineflayer.createBot(botConfig);
 
 bot.loadPlugin(pathfinder);
 

@@ -535,11 +535,14 @@ let conversationIdCounter = Date.now();
  */
 function mentionsBot(message) {
   const msg = message.toLowerCase();
-  const botName = bot.username.toLowerCase().replace(/_/g, ' ');
+  const botNameFull = bot.username.toLowerCase();
+  const botNameSpaced = botNameFull.replace(/_/g, ' ');
+  const botNameFirst = botNameFull.split('_')[0]; // "nova" from "nova_ai"
 
-  return msg.includes(botName) ||
-         msg.includes(bot.username.toLowerCase()) ||
-         msg.includes('@' + bot.username.toLowerCase());
+  return msg.includes(botNameFull) ||       // "nova_ai"
+         msg.includes(botNameSpaced) ||     // "nova ai"  
+         msg.includes(botNameFirst) ||      // "nova"
+         msg.includes('@' + botNameFull);   // "@nova_ai"
 }
 
 /**

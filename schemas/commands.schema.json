@@ -62,6 +62,27 @@
       },
       {
         "$ref": "#/definitions/FishCommand"
+      },
+      {
+        "$ref": "#/definitions/TillCommand"
+      },
+      {
+        "$ref": "#/definitions/PlantCommand"
+      },
+      {
+        "$ref": "#/definitions/HarvestCommand"
+      },
+      {
+        "$ref": "#/definitions/FarmCommand"
+      },
+      {
+        "$ref": "#/definitions/ShootCommand"
+      },
+      {
+        "$ref": "#/definitions/BlockShieldCommand"
+      },
+      {
+        "$ref": "#/definitions/ManageInventoryCommand"
       }
     ]
   },
@@ -347,30 +368,28 @@
     },
     "SmeltCommand": {
       "type": "object",
-      "description": "Smelt items in a furnace (Phase 7 - Coming Soon)",
+      "description": "Smelt items in a furnace (Phase 23 - Implemented)",
       "properties": {
         "action": {
           "const": "smelt"
         },
         "item": {
           "type": "string",
-          "description": "Item to smelt (e.g., 'iron_ore', 'raw_beef')"
-        },
-        "fuel": {
-          "type": "string",
-          "description": "Fuel to use (e.g., 'coal', 'charcoal', 'planks')"
+          "description": "Item to smelt (e.g., 'iron_ore', 'raw_iron', 'gold_ore', 'cobblestone')"
         },
         "count": {
           "type": "integer",
           "minimum": 1,
           "maximum": 64,
-          "default": 1
+          "description": "Number of items to smelt (optional, defaults to all)"
         }
       },
-      "required": ["action", "item", "fuel"],
+      "required": ["action", "item"],
       "additionalProperties": false,
-      "x-phase": 7,
-      "x-status": "not_implemented"
+      "x-phase": 23,
+      "x-status": "implemented",
+      "x-events": ["smelting_started", "smelting_complete", "smelt_failed", "fuel_added"],
+      "x-notes": "Auto-finds fuel (coal/wood), auto-places furnace if needed, waits for completion, collects output"
     },
     "ActivateCommand": {
       "type": "object",
@@ -438,6 +457,139 @@
       "x-status": "implemented",
       "x-events": ["fish_caught", "fish_failed"],
       "x-notes": "Alternative food source, can catch treasure items, peaceful survival option"
+    },
+    "TillCommand": {
+      "type": "object",
+      "description": "Till dirt blocks near water to create farmland (Phase 23 - Implemented)",
+      "properties": {
+        "action": {
+          "const": "till"
+        },
+        "radius": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10,
+          "default": 5,
+          "description": "Radius around water source to till"
+        }
+      },
+      "required": ["action"],
+      "additionalProperties": false,
+      "x-phase": 23,
+      "x-status": "implemented",
+      "x-events": ["tilling_complete", "till_failed"],
+      "x-notes": "Requires hoe in inventory, automatically finds water and nearby dirt"
+    },
+    "PlantCommand": {
+      "type": "object",
+      "description": "Plant crops on farmland (Phase 23 - Implemented)",
+      "properties": {
+        "action": {
+          "const": "plant"
+        },
+        "crop": {
+          "type": "string",
+          "enum": ["wheat", "carrot", "potato", "beetroot", "melon", "pumpkin", "nether_wart"],
+          "default": "wheat",
+          "description": "Type of crop to plant"
+        }
+      },
+      "required": ["action"],
+      "additionalProperties": false,
+      "x-phase": 23,
+      "x-status": "implemented",
+      "x-events": ["planting_complete", "plant_failed"],
+      "x-notes": "Requires seeds/crop item in inventory, automatically finds farmland"
+    },
+    "HarvestCommand": {
+      "type": "object",
+      "description": "Harvest mature crops and optionally replant (Phase 23 - Implemented)",
+      "properties": {
+        "action": {
+          "const": "harvest"
+        },
+        "autoReplant": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically replant after harvesting"
+        }
+      },
+      "required": ["action"],
+      "additionalProperties": false,
+      "x-phase": 23,
+      "x-status": "implemented",
+      "x-events": ["harvest_complete"],
+      "x-notes": "Only harvests fully grown crops, auto-replants if seeds available"
+    },
+    "FarmCommand": {
+      "type": "object",
+      "description": "Complete farming cycle: till, plant, wait, harvest (Phase 23 - Implemented)",
+      "properties": {
+        "action": {
+          "const": "farm"
+        },
+        "crop": {
+          "type": "string",
+          "enum": ["wheat", "carrot", "potato", "beetroot"],
+          "default": "wheat",
+          "description": "Type of crop to farm"
+        }
+      },
+      "required": ["action"],
+      "additionalProperties": false,
+      "x-phase": 23,
+      "x-status": "implemented",
+      "x-events": ["tilling_complete", "planting_complete", "harvest_complete"],
+      "x-notes": "Full farming cycle with periodic harvest checks"
+    },
+    "ShootCommand": {
+      "type": "object",
+      "description": "Engage target with bow/crossbow at range (Phase 23 - Implemented)",
+      "properties": {
+        "action": {
+          "const": "shoot"
+        },
+        "target": {
+          "type": "string",
+          "description": "Target name (mob type or player). If omitted, shoots nearest hostile."
+        }
+      },
+      "required": ["action"],
+      "additionalProperties": false,
+      "x-phase": 23,
+      "x-status": "implemented",
+      "x-events": ["ranged_combat_started", "arrow_shot", "ranged_retreat"],
+      "x-notes": "Maintains optimal range (15-25 blocks), auto-retreats when low health, requires bow and arrows"
+    },
+    "BlockShieldCommand": {
+      "type": "object",
+      "description": "Block incoming damage with shield (Phase 23 - Implemented)",
+      "properties": {
+        "action": {
+          "const": "block_shield"
+        }
+      },
+      "required": ["action"],
+      "additionalProperties": false,
+      "x-phase": 23,
+      "x-status": "implemented",
+      "x-events": ["shield_blocking"],
+      "x-notes": "Requires shield in inventory, auto-stops after 5 seconds"
+    },
+    "ManageInventoryCommand": {
+      "type": "object",
+      "description": "Auto-manage inventory: deposit to chest or drop junk (Phase 23 - Implemented)",
+      "properties": {
+        "action": {
+          "const": "manage_inventory"
+        }
+      },
+      "required": ["action"],
+      "additionalProperties": false,
+      "x-phase": 23,
+      "x-status": "implemented",
+      "x-events": ["inventory_full_warning", "item_deposited", "item_dropped_auto", "inventory_managed"],
+      "x-notes": "Keeps essential items (tools, weapons, food), deposits rest to chest or drops low-value items"
     }
   }
 }

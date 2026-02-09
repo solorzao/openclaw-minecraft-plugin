@@ -275,7 +275,7 @@ function considerIntroducing() {
   if (isReturning) {
     greeting = soul.persona ? `${soul.persona} back.` : 'Back.';
   } else {
-    greeting = soul.persona ? `${soul.persona} here.` : 'Nova here.';
+    greeting = soul.persona ? `${soul.persona} here.` : `${bot.username} here.`;
   }
   
   // Only announce trust system if someone asks, not on spawn
@@ -763,7 +763,7 @@ function getTrustLevel(username) {
     return knownEntities[username].trust;
   }
   // Check if it looks like a bot (common patterns)
-  if (username.includes('Bot') || username.includes('_AI') || username.includes('Nova')) {
+  if (username.includes('Bot') || username.includes('_AI') || username.endsWith('_bot')) {
     return TRUST_LEVELS.BOT;
   }
   return TRUST_LEVELS.NEUTRAL;
@@ -1210,7 +1210,7 @@ function evaluateRequest(request, requester) {
         type: DECISION.NEGOTIATE,
         reason: 'presenting_tradeoff_to_owner',
         response: tradeOff.message,
-        askingConfirmation: true,  // Owner can say "nova yes" to override
+        askingConfirmation: true,  // Owner can say "{prefix} yes" to override
         deferredAction: request
       };
     }
@@ -1569,15 +1569,49 @@ function logEvent(type, data) {
 }
 
 const bot = mineflayer.createBot({
-  host: '187.77.2.50',
-  port: 25568,
-  username: 'Nova_AI'
+  host: process.env.MC_HOST || '187.77.2.50',
+  port: parseInt(process.env.MC_PORT) || 25568,
+  username: process.env.BOT_USERNAME || 'Bot_AI'
 });
 
 bot.loadPlugin(pathfinder);
 
+// ==========================================
+// DYNAMIC COMMAND PREFIX SYSTEM
+// ==========================================
+
+/**
+ * Get the command prefix from the bot's username
+ * e.g., "Nova_AI" -> "nova", "Claude_Bot" -> "claude", "Bot_AI" -> "bot"
+ */
+function getCommandPrefix() {
+  const username = bot.username.toLowerCase();
+  // Extract first part before underscore/number (Nova_AI -> nova, Claude_Bot -> claude)
+  return username.split(/[_\d]/)[0];
+}
+
+/**
+ * Check if a message starts with this bot's command prefix
+ */
+function isCommandForMe(msg) {
+  const prefix = getCommandPrefix();
+  return msg.toLowerCase().startsWith(prefix + ' ') || msg.toLowerCase() === prefix;
+}
+
+/**
+ * Strip the command prefix from a message
+ */
+function stripPrefix(msg) {
+  const prefix = getCommandPrefix();
+  const lower = msg.toLowerCase();
+  if (lower.startsWith(prefix + ' ')) {
+    return msg.substring(prefix.length + 1).trim();
+  }
+  return msg;
+}
+
 bot.on('spawn', () => {
-  console.log('Nova has spawned in the world!');
+  console.log(`${bot.username} has spawned in the world!`);
 
   movements = new Movements(bot);
   movements.allowParkour = false;
@@ -1647,6 +1681,15 @@ bot.on('spawn', () => {
       logEvent('spawn_silent', { reason: 'no_other_players' });
     }
   }, 5000);  // Wait 5s to observe first
+  
+  // Phase 23: Start inventory management periodic check
+  checkInventoryPeriodically();
+  
+  // Phase 23: Load farm plots from world memory
+  if (worldMemory.farmPlots) {
+    farmPlots = worldMemory.farmPlots;
+    console.log(`🌾 Loaded ${farmPlots.length} farm plots from memory.`);
+  }
 });
 
 // ==========================================
@@ -2692,7 +2735,7 @@ async function tradeWithVillager(buyIndex = 0) {
         bot.chat(`Missing ${trade.inputItem1?.name} for trade!`);
       }
     } else {
-      bot.chat(`Villager has ${trades.trades.length} trades. Say "nova trade N" to buy.`);
+      bot.chat(`Villager has ${trades.trades.length} trades. Say "${getCommandPrefix()} trade N" to buy.`);
     }
     
     trades.close();
@@ -3453,6 +3496,9 @@ function updatePerception() {
   // Phase 22: Track watched blocks count
   const watchedBlocksCount = watchedBlocks.size;
 
+  // Phase 23: Get survival features state
+  const phase23State = typeof getPhase23Perception === 'function' ? getPhase23Perception() : null;
+
   logEvent('perception', {
     position: {
       x: Math.floor(bot.entity.position.x),
@@ -3477,7 +3523,9 @@ function updatePerception() {
     experience,
     recentSounds: recentSoundsSummary,
     vehicle: vehicleState,
-    watchedBlocks: watchedBlocksCount
+    watchedBlocks: watchedBlocksCount,
+    // Phase 23: Critical survival features state
+    phase23: phase23State
   });
 }
 
@@ -3502,20 +3550,23 @@ bot.on('chat', (username, message) => {
 
   const msg = message.toLowerCase().trim();
 
+  // Dynamic command prefix
+  const cmd = getCommandPrefix();
+  
   // Contextual introduction - only if asked
-  if (msg.includes('who are you') || msg.includes('who is nova') || msg === 'nova intro' || msg === 'nova hi' || msg === 'nova hello') {
+  if (msg.includes('who are you') || msg.includes(`who is ${cmd}`) || msg === `${cmd} intro` || msg === `${cmd} hi` || msg === `${cmd} hello`) {
     const intro = considerIntroducing();
     if (intro) {
       bot.chat(intro);
       if (getTrustLevel(username) < TRUST_LEVELS.FRIEND) {
-        setTimeout(() => bot.chat('Say "nova trust me" to work together.'), 1000);
+        setTimeout(() => bot.chat(`Say "${cmd} trust me" to work together.`), 1000);
       }
     }
     return;
   }
 
   // Help command
-  if (msg === 'nova help') {
+  if (msg === `${cmd} help`) {
     bot.chat('Commands: follow, stop, gather wood, explore, goto X Y Z, dig, place, equip, inventory');
     setTimeout(() => bot.chat('find_food, cook_food, craft <item>, mine <resource>, sleep, eat, status'), 500);
     setTimeout(() => bot.chat('build <template>, store, retrieve, mark <name>, goto_mark <name>, trade'), 1000);
@@ -3526,6 +3577,8 @@ bot.on('chat', (username, message) => {
     setTimeout(() => bot.chat('VEHICLE: steer <dir>, stop vehicle | ENTITY: breed <animal>, shear, milk'), 3500);
     setTimeout(() => bot.chat('ITEMS: drop <item> [count], give <player> <item> [count]'), 4000);
     setTimeout(() => bot.chat('MISC: look at <player>, sounds, xp/level, write log, watch door/chest'), 4500);
+    setTimeout(() => bot.chat('SMELT: smelt <item> | FARM: till, plant <crop>, harvest, farm <crop>'), 5000);
+    setTimeout(() => bot.chat('COMBAT: shoot <target>, block/shield | INV: inv status, manage inventory'), 5500);
     return;
   }
 
@@ -4173,6 +4226,131 @@ bot.on('chat', (username, message) => {
       const blocks = Array.from(watchedBlocks.keys()).join(', ');
       bot.chat(`Watching ${count} block(s): ${blocks}`);
     }
+    return;
+  }
+
+  // ==========================================
+  // PHASE 23: CRITICAL SURVIVAL - Chat Commands
+  // ==========================================
+
+  // Feature 1: Furnace Smelting 🔥
+  if (msg.startsWith('nova smelt ')) {
+    const parts = msg.replace('nova smelt ', '').trim().split(' ');
+    const item = parts[0];
+    const count = parts[1] ? parseInt(parts[1]) : null;
+    const request = { action: 'smelt', item, count, originalMessage: message };
+    processExternalRequest(request, username);
+    return;
+  }
+  if (msg === 'nova smelt') {
+    // Try to smelt any smeltable item
+    const smeltable = bot.inventory.items().find(i => 
+      Object.keys(SMELTABLE_ITEMS).includes(i.name)
+    );
+    if (smeltable) {
+      const request = { action: 'smelt', item: smeltable.name, originalMessage: message };
+      processExternalRequest(request, username);
+    } else {
+      bot.chat("I don't have anything to smelt!");
+    }
+    return;
+  }
+
+  // Feature 2: Crop Farming 🌾
+  if (msg === 'nova till' || msg === 'nova till soil') {
+    const request = { action: 'till', originalMessage: message };
+    processExternalRequest(request, username);
+    return;
+  }
+  if (msg.startsWith('nova plant ')) {
+    const crop = msg.replace('nova plant ', '').trim();
+    const request = { action: 'plant', crop, originalMessage: message };
+    processExternalRequest(request, username);
+    return;
+  }
+  if (msg === 'nova harvest') {
+    const request = { action: 'harvest', autoReplant: true, originalMessage: message };
+    processExternalRequest(request, username);
+    return;
+  }
+  if (msg.startsWith('nova farm ')) {
+    const crop = msg.replace('nova farm ', '').trim() || 'wheat';
+    const request = { action: 'farm', crop, originalMessage: message };
+    processExternalRequest(request, username);
+    return;
+  }
+  if (msg === 'nova farm') {
+    const request = { action: 'farm', crop: 'wheat', originalMessage: message };
+    processExternalRequest(request, username);
+    return;
+  }
+  if (msg === 'nova farm status') {
+    const plots = farmPlots.length;
+    const hasHoe = bot.inventory.items().some(i => HOE_TYPES.includes(i.name));
+    const seeds = Object.values(CROP_DATA)
+      .map(c => bot.inventory.items().find(i => i.name === c.seed))
+      .filter(Boolean)
+      .map(s => `${s.name}x${s.count}`)
+      .join(', ');
+    bot.chat(`Farm plots: ${plots} | Hoe: ${hasHoe ? 'yes' : 'no'} | Seeds: ${seeds || 'none'}`);
+    return;
+  }
+
+  // Feature 3: Ranged Combat 🏹
+  if (msg.startsWith('nova shoot ')) {
+    const target = msg.replace('nova shoot ', '').trim();
+    const request = { action: 'shoot', target, originalMessage: message };
+    processExternalRequest(request, username);
+    return;
+  }
+  if (msg === 'nova shoot') {
+    const request = { action: 'shoot', target: null, originalMessage: message };
+    processExternalRequest(request, username);
+    return;
+  }
+  if (msg === 'nova block' || msg === 'nova shield') {
+    enqueueCommands([{ action: 'block_shield' }]);
+    bot.chat('Raising shield!');
+    return;
+  }
+  if (msg === 'nova stop blocking' || msg === 'nova unblock') {
+    stopBlocking();
+    bot.chat('Lowered shield.');
+    return;
+  }
+  if (msg === 'nova ranged status' || msg === 'nova combat status') {
+    const hasBow = bot.inventory.items().some(i => i.name === 'bow' || i.name === 'crossbow');
+    const arrows = bot.inventory.items().find(i => i.name.includes('arrow'));
+    const hasShield = bot.inventory.items().some(i => i.name === 'shield');
+    bot.chat(`Bow: ${hasBow ? 'yes' : 'no'} | Arrows: ${arrows ? arrows.count : 0} | Shield: ${hasShield ? 'yes' : 'no'}`);
+    return;
+  }
+
+  // Feature 4: Inventory Management 📦
+  if (msg === 'nova inv status' || msg === 'nova inventory status') {
+    const usage = getInventoryUsage();
+    const nearChest = bot.findBlock({ matching: b => b.name === 'chest', maxDistance: 64 }) !== null;
+    bot.chat(`Inventory: ${usage}/36 slots | Nearby chest: ${nearChest ? 'yes' : 'no'}`);
+    return;
+  }
+  if (msg === 'nova manage inventory' || msg === 'nova clean inventory') {
+    autoManageInventory();
+    return;
+  }
+  if (msg === 'nova dump junk' || msg === 'nova drop junk') {
+    (async () => {
+      const items = bot.inventory.items();
+      let dropped = 0;
+      for (const item of items) {
+        if (isLowValueItem(item.name)) {
+          try {
+            await bot.tossStack(item);
+            dropped++;
+          } catch (e) {}
+        }
+      }
+      bot.chat(`Dropped ${dropped} junk item stacks.`);
+    })();
     return;
   }
 });
@@ -5048,6 +5226,54 @@ async function executeCommand(cmd) {
       return;
     }
 
+    // ==========================================
+    // PHASE 23: CRITICAL SURVIVAL FEATURES
+    // ==========================================
+
+    // Feature 1: Furnace Smelting 🔥
+    case 'smelt': {
+      await smeltItem(cmd.item, cmd.count);
+      return;
+    }
+
+    // Feature 2: Crop Farming 🌾
+    case 'till': {
+      await tillSoil(cmd.radius || 5);
+      return;
+    }
+
+    case 'plant': {
+      await plantCrop(cmd.crop || 'wheat');
+      return;
+    }
+
+    case 'harvest': {
+      await harvestCrops(cmd.autoReplant !== false);
+      return;
+    }
+
+    case 'farm': {
+      await farmCycle(cmd.crop || 'wheat');
+      return;
+    }
+
+    // Feature 3: Ranged Combat 🏹
+    case 'shoot': {
+      await shootTarget(cmd.target);
+      return;
+    }
+
+    case 'block_shield': {
+      await blockWithShield();
+      return;
+    }
+
+    // Feature 4: Inventory Management 📦
+    case 'manage_inventory': {
+      await autoManageInventory();
+      return;
+    }
+
     default:
       logEvent('unknown_command', { cmd });
       return;
@@ -5141,18 +5367,3 @@ function handleGoal(goalName) {
       return;
   }
 }
-
-// ==========================================
-// STARTUP
-// ==========================================
-
-console.log('AI-controlled Nova bot v6 starting (FEATURE COMPLETE!)...');
-console.log('Phases 8-19: Hunger, Crafting, Mining, Sleep, Building, Storage, Memory, Trading, Potions, Fishing');
-console.log('Phase 20: TRUE AUTONOMY - Bot has agency, evaluates all requests, negotiates!');
-console.log('Phase 21: BOT-TO-BOT COMMUNICATION - Whisper-based coordination, discovery, emergencies!');
-console.log('Phase 22: 8 CRITICAL CAPABILITIES - Vehicle, Entity Interaction, Items, Look, Sound, XP, Books, Block Watch!');
-console.log('Events:', EVENTS_FILE);
-console.log('Commands:', COMMANDS_FILE);
-console.log('World Memory:', WORLD_MEMORY_FILE);
-console.log('Default Goal:', AUTONOMOUS_CONFIG.defaultGoal);
-console.log('Autonomous:', AUTONOMOUS_CONFIG.enabled ? 'ENABLED (with agency)' : 'DISABLED');

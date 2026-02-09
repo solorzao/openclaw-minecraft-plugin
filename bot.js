@@ -252,6 +252,36 @@ function checkValueAlignment(request, values) {
 /**
  * Add personality flair to chat messages based on soul.vibe
  */
+// Contextual greeting - bot decides whether to introduce itself
+function considerIntroducing() {
+  const otherPlayers = Object.values(bot.players).filter(p => p.username !== bot.username);
+  
+  // Don't greet if alone
+  if (otherPlayers.length === 0) {
+    return null;
+  }
+  
+  // Check if we've been here before (has world memory)
+  const isReturning = worldMemory.spawn !== null;
+  
+  // Shy/quiet personalities might not greet at all
+  if (soul.vibe && (soul.vibe.includes('shy') || soul.vibe.includes('quiet'))) {
+    return null;  // Let them notice me first
+  }
+  
+  // Generate natural greeting based on context
+  let greeting = '';
+  
+  if (isReturning) {
+    greeting = soul.persona ? `${soul.persona} back.` : 'Back.';
+  } else {
+    greeting = soul.persona ? `${soul.persona} here.` : 'Nova here.';
+  }
+  
+  // Only announce trust system if someone asks, not on spawn
+  return styleMessage(greeting);
+}
+
 function styleMessage(message) {
   if (!soul.vibe || soul.vibe === 'neutral') {
     return message;
@@ -1569,21 +1599,8 @@ bot.on('spawn', () => {
   // Load SOUL.md for personality, values, and boundaries
   const hasSoul = loadSoul();
   
-  // Generate personalized greeting based on soul
-  let greeting = 'Nova_AI v5 online! I have AGENCY now - I make my own decisions.';
-  
-  if (soul.persona) {
-    greeting = `${soul.persona} online! I have AGENCY now.`;
-  }
-  
-  if (soul.vibe && soul.vibe !== 'neutral') {
-    greeting += ` Vibe: ${soul.vibe}.`;
-  }
-  
-  greeting += ' Say "nova trust me" to become my owner!';
-  
-  // Style the greeting based on personality
-  bot.chat(styleMessage(greeting));
+  // AUTONOMOUS SPAWN BEHAVIOR: Observe first, decide whether to announce
+  // Don't auto-greet - it feels scripted. Let the bot decide based on context.
 
   logEvent('spawn', {
     position: bot.entity.position,
@@ -1608,20 +1625,28 @@ bot.on('spawn', () => {
     }
   }, 15000);
   
-  // Phase 20+: Start autonomous behavior after short delay
+  // Phase 20+: Start autonomous behavior after short delay (silently)
   setTimeout(() => {
     if (AUTONOMOUS_CONFIG.enabled) {
       startAutonomousBehavior();
-      const phase = worldMemory.autonomousProgress.phase;
-      bot.chat(`[Auto] Pursuing my own goals! Current phase: ${phase}. I'll evaluate your requests.`);
+      // Don't auto-announce - let actions speak for themselves
     }
   }, 3000);
   
-  // Phase 21: Announce self as a bot for multi-bot coordination
+  // Phase 21: Bot discovery - observe first, then decide
   setTimeout(() => {
-    bot.chat('🤖 BOT_ANNOUNCE');
-    logEvent('bot_announced', { username: bot.username });
-  }, 2000);
+    // Check if there are other players/bots online
+    const otherPlayers = Object.values(bot.players).filter(p => p.username !== bot.username);
+    
+    if (otherPlayers.length > 0) {
+      // Someone else is here - quietly announce for bot coordination
+      bot.chat('🤖 BOT_ANNOUNCE');
+      logEvent('bot_announced', { username: bot.username, playersOnline: otherPlayers.length });
+    } else {
+      // Alone on the server - no need to announce, just observe
+      logEvent('spawn_silent', { reason: 'no_other_players' });
+    }
+  }, 5000);  // Wait 5s to observe first
 });
 
 // ==========================================
@@ -3476,6 +3501,18 @@ bot.on('chat', (username, message) => {
   }
 
   const msg = message.toLowerCase().trim();
+
+  // Contextual introduction - only if asked
+  if (msg.includes('who are you') || msg.includes('who is nova') || msg === 'nova intro' || msg === 'nova hi' || msg === 'nova hello') {
+    const intro = considerIntroducing();
+    if (intro) {
+      bot.chat(intro);
+      if (getTrustLevel(username) < TRUST_LEVELS.FRIEND) {
+        setTimeout(() => bot.chat('Say "nova trust me" to work together.'), 1000);
+      }
+    }
+    return;
+  }
 
   // Help command
   if (msg === 'nova help') {

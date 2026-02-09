@@ -498,7 +498,7 @@ let worldMemory = {
 // ==========================================
 
 const AUTONOMOUS_CONFIG = {
-  enabled: false,  // TEMPORARILY DISABLED - has infinite gather_wood loop bug
+  enabled: true,  // Re-enabled after fixing infinite gather_wood loop bug (2026-02-08)
   defaultGoal: 'thriving_survivor',
   checkIntervalMs: 10000,
   announceActions: true,
@@ -722,6 +722,31 @@ let lastAutonomousAction = null;
 let currentAutonomousGoal = null;  // Track what we're actively doing
 let requestQueue = [];  // Deferred requests
 
+// FIX: Proper busy state tracking for pathfinder-based goals
+let autonomousGoalBusy = false;  // True while pathfinder goal is active (not just queued)
+let autonomousLoopLock = false;  // Prevents concurrent interval executions
+let lastAutonomousAttemptTime = 0;  // Cooldown between autonomous action ATTEMPTS
+let autonomousGoalTimeout = null;  // Safety timeout to clear stuck goals
+const AUTONOMOUS_ATTEMPT_COOLDOWN_MS = 30000;  // 30 seconds between new goal attempts
+const AUTONOMOUS_GOAL_TIMEOUT_MS = 120000;  // 2 minutes max for any autonomous goal
+
+// FIX: Clear autonomous goal state (used by multiple places)
+function clearAutonomousGoalState(reason = 'cleared') {
+  if (autonomousGoalTimeout) {
+    clearTimeout(autonomousGoalTimeout);
+    autonomousGoalTimeout = null;
+  }
+  if (autonomousGoalBusy || currentAutonomousGoal) {
+    logEvent('autonomous_goal_cleared', { 
+      reason, 
+      wasGoal: currentAutonomousGoal?.action,
+      wasBusy: autonomousGoalBusy 
+    });
+  }
+  currentAutonomousGoal = null;
+  autonomousGoalBusy = false;
+}
+
 // Player command state management
 let playerCommandActive = false;
 let playerCommandTimeout = null;
@@ -734,6 +759,17 @@ function isPlayerCommandActive() {
 function setPlayerCommandActive(durationMs = 60000) {
   playerCommandActive = true;
   playerCommandStartTime = Date.now();
+  
+  // FIX: Clear any active autonomous goal when player command comes in
+  if (autonomousGoalBusy || currentAutonomousGoal) {
+    logEvent('autonomous_interrupted_by_player', { 
+      goal: currentAutonomousGoal?.action,
+      autonomousGoal: currentAutonomousGoal?.goal
+    });
+    clearAutonomousGoalState('player_command');
+    bot.pathfinder.setGoal(null);  // Cancel pathfinder
+  }
+  
   if (playerCommandTimeout) clearTimeout(playerCommandTimeout);
   playerCommandTimeout = setTimeout(() => {
     playerCommandActive = false;
@@ -3178,6 +3214,12 @@ async function getPhaseAction(phase) {
 async function executeAutonomousAction(action) {
   if (!action) return;
   
+  // FIX: Check if already busy before starting a new action
+  if (autonomousGoalBusy) {
+    logEvent('autonomous_skip_busy', { action: action.action, reason: 'already_busy' });
+    return;
+  }
+  
   // Set this as our current autonomous goal
   currentAutonomousGoal = action;
   action.source = 'autonomous';
@@ -3186,11 +3228,44 @@ async function executeAutonomousAction(action) {
   worldMemory.autonomousProgress.lastAction = action.action;
   worldMemory.autonomousProgress.lastActionTime = Date.now();
   
-  logEvent('autonomous_action', { 
-    action: action.action, 
-    reason: action.reason,
-    phase: worldMemory.autonomousProgress.phase
-  });
+  // FIX: Pathfinder-based goals need the busy flag
+  const pathfinderBasedActions = ['goal', 'goto', 'goto_landmark', 'follow', 'explore', 'mine_resource'];
+  const isPathfinderAction = pathfinderBasedActions.includes(action.action) || 
+                             (action.action === 'goal' && ['gather_wood', 'explore'].includes(action.goal));
+  
+  if (isPathfinderAction) {
+    autonomousGoalBusy = true;
+    console.log('[AUTONOMOUS] Setting busy=true for', action.action, action.goal);
+    
+    // FIX: Set safety timeout to clear stuck goals
+    if (autonomousGoalTimeout) clearTimeout(autonomousGoalTimeout);
+    autonomousGoalTimeout = setTimeout(() => {
+      if (autonomousGoalBusy) {
+        logEvent('autonomous_goal_timeout', { 
+          action: action.action, 
+          goal: action.goal,
+          timeoutMs: AUTONOMOUS_GOAL_TIMEOUT_MS 
+        });
+        clearAutonomousGoalState('timeout');
+        // Cancel current pathfinder goal
+        bot.pathfinder.setGoal(null);
+      }
+    }, AUTONOMOUS_GOAL_TIMEOUT_MS);
+    
+    logEvent('autonomous_action_start', { 
+      action: action.action, 
+      goal: action.goal,
+      reason: action.reason,
+      phase: worldMemory.autonomousProgress.phase,
+      busy: true
+    });
+  } else {
+    logEvent('autonomous_action', { 
+      action: action.action, 
+      reason: action.reason,
+      phase: worldMemory.autonomousProgress.phase
+    });
+  }
   
   if (AUTONOMOUS_CONFIG.announceActions && action.reason) {
     // Only announce significant actions
@@ -3205,16 +3280,21 @@ async function executeAutonomousAction(action) {
     await executeCommand(action);
   } catch (err) {
     logEvent('autonomous_error', { action: action.action, error: err.message });
+    // FIX: Clear busy flag on error
+    clearAutonomousGoalState('error');
   } finally {
-    // Clear current goal when done (unless it's a continuous action like follow)
-    if (action.action !== 'follow') {
-      currentAutonomousGoal = null;
+    // FIX: Only clear goal state for non-pathfinder actions
+    // Pathfinder actions clear on goal_reached event
+    if (!isPathfinderAction) {
+      clearAutonomousGoalState('non_pathfinder_complete');
       
       // After completing autonomous action, check for queued requests
       if (requestQueue.length > 0) {
         setTimeout(() => processRequestQueue(), 1000); // Small delay before processing queue
       }
     }
+    // For pathfinder actions: busy flag and currentAutonomousGoal stay set
+    // They get cleared in the goal_reached event handler
   }
 }
 
@@ -3239,24 +3319,48 @@ function startAutonomousBehavior() {
   });
   
   autonomousInterval = setInterval(async () => {
-    // Process any queued requests first
-    if (requestQueue.length > 0 && !currentAutonomousGoal) {
-      await processRequestQueue();
+    // FIX: Prevent concurrent interval executions (race condition)
+    if (autonomousLoopLock) {
+      console.log('[AUTONOMOUS] Skipping: loop lock active');
       return;
     }
+    autonomousLoopLock = true;
     
-    // Skip if we're actively doing something
-    if (currentAutonomousGoal && Date.now() - worldMemory.autonomousProgress.lastActionTime < 5000) {
-      return;
-    }
-    
-    // Skip if there are pending external commands
-    if (hasPendingCommands()) return;
-    
-    // Get next autonomous goal
-    const action = await getAutonomousGoal();
-    if (action) {
-      await executeAutonomousAction(action);
+    try {
+      // Process any queued requests first
+      if (requestQueue.length > 0 && !currentAutonomousGoal && !autonomousGoalBusy) {
+        await processRequestQueue();
+        return;
+      }
+      
+      // FIX: Check busy flag - if pathfinder is working, don't spawn new goals
+      if (autonomousGoalBusy) {
+        console.log('[AUTONOMOUS] Skipping: busy with', currentAutonomousGoal?.goal || currentAutonomousGoal?.action);
+        return;
+      }
+      
+      // Skip if we're actively doing something (legacy check)
+      if (currentAutonomousGoal && Date.now() - worldMemory.autonomousProgress.lastActionTime < 5000) {
+        return;
+      }
+      
+      // FIX: Cooldown between autonomous action ATTEMPTS (even if goal completed quickly)
+      const timeSinceLastAttempt = Date.now() - lastAutonomousAttemptTime;
+      if (timeSinceLastAttempt < AUTONOMOUS_ATTEMPT_COOLDOWN_MS) {
+        return;
+      }
+      
+      // Skip if there are pending external commands
+      if (hasPendingCommands()) return;
+      
+      // Get next autonomous goal
+      const action = await getAutonomousGoal();
+      if (action) {
+        lastAutonomousAttemptTime = Date.now();  // FIX: Record attempt time
+        await executeAutonomousAction(action);
+      }
+    } finally {
+      autonomousLoopLock = false;
     }
   }, AUTONOMOUS_CONFIG.checkIntervalMs);
 }
@@ -4204,12 +4308,66 @@ bot.on('chat', (username, message) => {
 // EVENTS
 // ==========================================
 
-bot.on('goal_reached', () => {
-  logEvent('goal_reached', { goal: currentGoal });
+bot.on('goal_reached', async () => {
+  logEvent('goal_reached', { goal: currentGoal, autonomousGoal: currentAutonomousGoal?.action });
+  
+  // FIX: Handle autonomous goal completion
+  if (autonomousGoalBusy && currentAutonomousGoal) {
+    const completedGoal = currentAutonomousGoal;
+    logEvent('autonomous_goal_reached', { 
+      action: completedGoal.action, 
+      goal: completedGoal.goal,
+      reason: completedGoal.reason 
+    });
+    
+    // For gather_wood, try to mine the tree we arrived at
+    if (completedGoal.action === 'goal' && completedGoal.goal === 'gather_wood') {
+      const nearbyLog = bot.findBlock({
+        matching: (block) => block.name.includes('log'),
+        maxDistance: 3
+      });
+      
+      if (nearbyLog) {
+        try {
+          logEvent('autonomous_mining_log', { position: nearbyLog.position });
+          await bot.dig(nearbyLog);
+          logEvent('autonomous_log_mined', { position: nearbyLog.position });
+          
+          // Update wood count in memory
+          worldMemory.autonomousProgress.stats = worldMemory.autonomousProgress.stats || {};
+          worldMemory.autonomousProgress.stats.blocksGathered = worldMemory.autonomousProgress.stats.blocksGathered || {};
+          worldMemory.autonomousProgress.stats.blocksGathered.wood = (worldMemory.autonomousProgress.stats.blocksGathered.wood || 0) + 1;
+          saveWorldMemory();
+        } catch (err) {
+          logEvent('autonomous_mine_error', { error: err.message });
+        }
+      }
+    }
+    
+    // Clear the autonomous goal state
+    clearAutonomousGoalState('goal_reached');
+    
+    // Check for queued requests after completing autonomous action
+    if (requestQueue.length > 0) {
+      setTimeout(() => processRequestQueue(), 1000);
+    }
+  }
 });
 
 bot.on('path_update', (r) => {
   logEvent('path_update', { status: r.status, time: r.time });
+  
+  // FIX: Clear busy flag if path fails or is interrupted
+  if (r.status === 'noPath' || r.status === 'timeout' || r.status === 'stuck') {
+    if (autonomousGoalBusy) {
+      logEvent('autonomous_path_failed', { 
+        status: r.status, 
+        goal: currentAutonomousGoal?.action,
+        autonomousGoal: currentAutonomousGoal?.goal
+      });
+      clearAutonomousGoalState('path_' + r.status);
+    }
+  }
 });
 
 bot.on('health', () => {

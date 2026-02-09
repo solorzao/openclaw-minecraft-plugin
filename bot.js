@@ -498,7 +498,7 @@ let worldMemory = {
 // ==========================================
 
 const AUTONOMOUS_CONFIG = {
-  enabled: true,
+  enabled: false,  // TEMPORARILY DISABLED - has infinite gather_wood loop bug
   defaultGoal: 'thriving_survivor',
   checkIntervalMs: 10000,
   announceActions: true,
@@ -1585,17 +1585,23 @@ bot.on('spawn', () => {
     }
   }, 3000);
   
-  // Phase 21: Bot discovery - observe first, then decide
+  // Phase 21: Simple greeting - let players know a bot joined
   setTimeout(() => {
-    // Check if there are other players/bots online
     const otherPlayers = Object.values(bot.players).filter(p => p.username !== bot.username);
     
     if (otherPlayers.length > 0) {
-      // Someone else is here - quietly announce for bot coordination
-      bot.chat('🤖 BOT_ANNOUNCE');
-      logEvent('bot_announced', { username: bot.username, playersOnline: otherPlayers.length });
+      // Someone else is here - say hello
+      bot.chat('Hello World!');
+      logEvent('bot_greeted', { username: bot.username, playersOnline: otherPlayers.length });
+      
+      // Discover other bots via whispers (not public chat spam)
+      otherPlayers.forEach(player => {
+        if (player.username && (player.username.includes('Bot') || player.username.includes('_AI'))) {
+          registerBot(player.username);
+        }
+      });
     } else {
-      // Alone on the server - no need to announce, just observe
+      // Alone on the server - silent spawn
       logEvent('spawn_silent', { reason: 'no_other_players' });
     }
   }, 5000);  // Wait 5s to observe first
@@ -3456,14 +3462,9 @@ bot.on('chat', (username, message) => {
   console.log(`${username}: ${message}`);
   logEvent('chat', { username, message });
 
-  // Phase 21: Listen for bot announcements
-  if (message === '🤖 BOT_ANNOUNCE' && username !== bot.username) {
+  // Phase 21: Detect other bots by username patterns (no public spam)
+  if (username.includes('Bot') || username.includes('_AI') || username.endsWith('_bot')) {
     registerBot(username);
-    // Respond with our own announcement so they know about us
-    setTimeout(() => {
-      bot.chat('🤖 BOT_ANNOUNCE');
-    }, 500 + Math.random() * 500); // Stagger to avoid message floods
-    return;
   }
 
   const msg = message.toLowerCase().trim();

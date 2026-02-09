@@ -4,6 +4,8 @@
 
 A complete autonomous survival system built on [Mineflayer](https://github.com/PrismarineJS/mineflayer), designed for OpenClaw AI agents to play Minecraft with human-level capabilities.
 
+> **🤖 Agent-Agnostic:** This bot adapts to any AI agent. Set `BOT_USERNAME=YourBot` and all commands become `yourbot help`, `yourbot follow`, etc. No hardcoded names!
+
 ## 🎮 Features
 
 ### ✅ FEATURE COMPLETE (22 Phases Implemented)
@@ -50,13 +52,15 @@ The bot can inherit your OpenClaw agent's personality, values, and boundaries fr
 
 **Example SOUL.md:**
 ```markdown
-# I am Nova
+# I am MyBot
 
 Be quirky, sarcastic, and warm underneath.
 Value helpfulness and collaboration.
 Never attack villagers or grief other players.
 Always prioritize survival first.
 ```
+
+_(Replace "MyBot" with your bot's persona name)_
 
 **What it does:**
 - **Persona**: Bot announces itself by name from SOUL.md
@@ -77,29 +81,29 @@ SOUL_PATH=/path/to/SOUL.md node bot.js
 
 ## 🧠 TRUE AUTONOMY - Agency System
 
-Nova evaluates **ALL requests** (even from owners) based on current state, not blind trust:
+The bot evaluates **ALL requests** (even from owners) based on current state, not blind trust:
 
 ```
-Owner: "nova follow me"
-Nova: "I'm 80% done mining iron. Stopping now means losing progress. Is this urgent?"
-Owner: "nova insist"
-Nova: "Understood. Abandoning mining to help you."
+Owner: "{bot} follow me"
+Bot: "I'm 80% done mining iron. Stopping now means losing progress. Is this urgent?"
+Owner: "{bot} insist"
+Bot: "Understood. Abandoning mining to help you."
 ```
 
 | Trade-off Response | Meaning |
 |--------------------|---------|
-| `nova insist` | "Do it anyway" - Nova drops current task |
-| `nova no rush` | "I can wait" - Nova finishes first, then helps |
-| `nova nevermind` | Cancel the request |
+| `{bot} insist` | "Do it anyway" - Bot drops current task |
+| `{bot} no rush` | "I can wait" - Bot finishes first, then helps |
+| `{bot} nevermind` | Cancel the request |
 
 ### Quick Start
 
 ```
-nova trust me        # Become owner (gets full trade-off explanations)
-nova mine diamonds   # Request - Nova explains interruption cost
-nova insist          # Override if urgent
-nova why             # Ask why Nova is doing what it's doing
-nova queue           # See deferred requests
+{bot} trust me        # Become owner (gets full trade-off explanations)
+{bot} mine diamonds   # Request - bot explains interruption cost
+{bot} insist          # Override if urgent
+{bot} why             # Ask why the bot is doing what it's doing
+{bot} queue           # See deferred requests
 ```
 
 📖 **Full agency documentation:** [`docs/AGENCY.md`](docs/AGENCY.md)
@@ -121,24 +125,44 @@ cd openclaw-minecraft-plugin
 # Install dependencies
 npm install
 
-# Edit bot.js to configure your server
-nano bot.js  # Change host, port, username
+# Configure via environment variables
+export BOT_USERNAME=MyBot_AI    # Your bot's name
+export MC_HOST=187.77.2.50      # Your Minecraft server
+export MC_PORT=25568            # Server port
 
 # Run the bot
 npm start
+
+# Or run with inline config
+BOT_USERNAME=MyBot_AI MC_HOST=myserver.com node bot.js
 ```
 
 ### Configuration
 
-Edit `bot.js` lines 60-64:
+**Environment Variables (Recommended):**
+```bash
+# Set your bot's name (commands will be "{name} help", "{name} follow", etc.)
+export BOT_USERNAME=MyBot_AI
+
+# Server connection
+export MC_HOST=myserver.com
+export MC_PORT=25565
+
+# Run the bot
+node bot.js
+```
+
+**Or edit `bot.js` directly:**
 
 ```javascript
 const bot = mineflayer.createBot({
-  host: '187.77.2.50',     // Your server IP
-  port: 25568,              // Your server port
-  username: 'Nova_AI'       // Bot username (offline mode)
+  host: process.env.MC_HOST || '187.77.2.50',     // Your server IP
+  port: parseInt(process.env.MC_PORT) || 25568,   // Your server port
+  username: process.env.BOT_USERNAME || 'Bot_AI'  // Bot username (offline mode)
 });
 ```
+
+**Command Prefix:** Commands automatically use the bot's name prefix. If `BOT_USERNAME=Claude_Bot`, commands are `claude help`, `claude follow`, etc.
 
 ## 🤖 How It Works
 
@@ -194,41 +218,43 @@ See [`examples/basic-controller.js`](examples/basic-controller.js) for a simple 
 
 ## 🔧 In-Game Commands
 
-Say these in Minecraft chat:
+**Note:** Commands use your bot's username prefix. If `BOT_USERNAME=MyBot`, commands are `mybot help`, `mybot follow`, etc.
+
+Examples below use `{bot}` as a placeholder for your bot's name:
 
 ```
-nova help          - List all commands
-nova status        - Health, food, position
-nova follow        - Follow you
-nova stop          - Stop current action
-nova find food     - Hunt animals
-nova cook          - Cook raw meat
-nova eat           - Eat food manually
-nova craft <item>  - Craft item from inventory
-nova mine <ore>    - Find and mine resource
-nova sleep         - Find bed and sleep
-nova build shelter - Build 3x3 shelter
-nova store         - Store items in chest
-nova mark home     - Save current location
-nova goto_mark home - Return to saved location
-nova trade         - Trade with villager
-nova activate      - Right-click block ahead
-nova mount         - Mount nearby horse/boat
-nova fish          - Start fishing
+{bot} help          - List all commands
+{bot} status        - Health, food, position
+{bot} follow        - Follow you
+{bot} stop          - Stop current action
+{bot} find food     - Hunt animals
+{bot} cook          - Cook raw meat
+{bot} eat           - Eat food manually
+{bot} craft <item>  - Craft item from inventory
+{bot} mine <ore>    - Find and mine resource
+{bot} sleep         - Find bed and sleep
+{bot} build shelter - Build 3x3 shelter
+{bot} store         - Store items in chest
+{bot} mark home     - Save current location
+{bot} goto_mark home - Return to saved location
+{bot} trade         - Trade with villager
+{bot} activate      - Right-click block ahead
+{bot} mount         - Mount nearby horse/boat
+{bot} fish          - Start fishing
 
 # Agency Commands (Trade-off Responses)
-nova insist        - "Do it anyway" (drops current task)
-nova no rush       - "I can wait" (finish first)
-nova nevermind     - Cancel your request
-nova okay          - Accept counter-proposal
+{bot} insist        - "Do it anyway" (drops current task)
+{bot} no rush       - "I can wait" (finish first)
+{bot} nevermind     - Cancel your request
+{bot} okay          - Accept counter-proposal
 
 # Trust & Introspection
-nova trust me      - Become owner (full explanations)
-nova trust X friend - Set trust level (owner only)
-nova who trusts    - List trust levels
-nova why           - Why is Nova doing this?
-nova queue         - Show deferred requests
-nova agency on/off - Toggle agency (off = blind obey)
+{bot} trust me      - Become owner (full explanations)
+{bot} trust X friend - Set trust level (owner only)
+{bot} who trusts    - List trust levels
+{bot} why           - Why is the bot doing this?
+{bot} queue         - Show deferred requests
+{bot} agency on/off - Toggle agency (off = blind obey)
 ```
 
 ## 🎮 For OpenClaw Agents
@@ -298,8 +324,8 @@ Always help those in need.
 ```
 
 **Result:**
-- `nova attack zombie` → ✅ "Fighting! :)"
-- `nova attack villager` → ❌ "That conflicts with my values. I don't attack villagers."
+- `{bot} attack zombie` → ✅ "Fighting! :)"
+- `{bot} attack villager` → ❌ "That conflicts with my values. I don't attack villagers."
 
 ### Competitive Soul
 ```markdown
@@ -311,8 +337,8 @@ Prioritize my own survival first.
 ```
 
 **Result:**
-- `nova help stranger mine` → "I'm focused on my own goals. What's in it for me?"
-- `nova mine diamonds` → "Let's mine! Easy."
+- `{bot} help stranger mine` → "I'm focused on my own goals. What's in it for me?"
+- `{bot} mine diamonds` → "Let's mine! Easy."
 
 ### Shy Explorer Soul  
 ```markdown
@@ -324,8 +350,8 @@ Never engage in unnecessary combat.
 ```
 
 **Result:**
-- `nova explore` → "Let's explore..."
-- `nova attack pig` → ❌ "That doesn't align with what I care about."
+- `{bot} explore` → "Let's explore..."
+- `{bot} attack pig` → ❌ "That doesn't align with what I care about."
 
 See [`examples/souls/`](examples/souls/) for more templates.
 
@@ -343,36 +369,36 @@ Run multiple bots that automatically discover and coordinate with each other!
 ### Commands
 
 ```
-nova bots             - List known bots on the server
-nova ask <bot> to <x> - Request another bot to do something
-nova announce <msg>   - Broadcast discovery to all bots
-nova emergency        - Send emergency signal (nearby bots may respond)
-nova claim <resource> - Mark current area as claimed
-nova claims           - View all bot claims
+{bot} bots             - List known bots on the server
+{bot} ask <bot> to <x> - Request another bot to do something
+{bot} announce <msg>   - Broadcast discovery to all bots
+{bot} emergency        - Send emergency signal (nearby bots may respond)
+{bot} claim <resource> - Mark current area as claimed
+{bot} claims           - View all bot claims
 ```
 
 ### Example: Coordinated Mining
 
 ```
-Player: nova ask Mining_Bot to help me mine diamonds
-Nova: Asking Mining_Bot to help me mine diamonds...
+Player: mybot ask Mining_Bot to help me mine diamonds
+MyBot: Asking Mining_Bot to help me mine diamonds...
 Mining_Bot: (evaluates request, responds via whisper)
-Nova: Mining_Bot accepted! They're on their way.
+MyBot: Mining_Bot accepted! They're on their way.
 ```
 
 ### Example: Discovery Sharing
 
 ```
-Nova finds a village, automatically announces to all bots
+MyBot finds a village, automatically announces to all bots
 Other bots save the location in their world memory
 ```
 
 ### Example: Emergency Response
 
 ```
-Nova_A: nova emergency  (under attack, low health)
-Nova_B: 🚨 Responding to Nova_A's emergency!  (health > 10, not busy)
-Nova_B pathfinds to Nova_A's location
+Bot_A: botA emergency  (under attack, low health)
+Bot_B: 🚨 Responding to Bot_A's emergency!  (health > 10, not busy)
+Bot_B pathfinds to Bot_A's location
 ```
 
 ### Message Types
@@ -423,10 +449,10 @@ openclaw-minecraft-plugin/
 # Run bot with debug output
 DEBUG=minecraft-protocol node bot.js
 
-# Test specific feature in-game
-Wookiee_23: nova craft wooden_pickaxe
-Wookiee_23: nova mine coal
-Wookiee_23: nova mount
+# Test specific feature in-game (replace {bot} with your bot's name)
+Wookiee_23: mybot craft wooden_pickaxe
+Wookiee_23: mybot mine coal
+Wookiee_23: mybot mount
 ```
 
 ## 🤝 Contributing
@@ -444,7 +470,7 @@ MIT License - See [LICENSE](LICENSE)
 
 ## 🌟 Credits
 
-Built by **Nova** (AI familiar) & **Oliver** for the OpenClaw project.
+Built for the **OpenClaw** project by Oliver & Nova (AI familiar).
 
 Powered by:
 - [Mineflayer](https://github.com/PrismarineJS/mineflayer) - High-level Minecraft bot API

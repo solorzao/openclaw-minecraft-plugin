@@ -49,7 +49,7 @@ Commands will use your bot's name: `nova help`, `nova follow`, `nova mine iron`,
 | 21 | **BOT-TO-BOT** 🤖 | Whisper-based multi-bot coordination, discovery, emergencies! |
 | 22 | **🆕 8 CRITICAL CAPS** ⭐ | Vehicle steering, entity interaction, item give/drop, look control, sound awareness, XP system, book writing, block subscriptions |
 
-### Phase 22: 8 Critical Capabilities (NEW!)
+### Phase 22: 8 Critical Capabilities
 
 | Feature | Commands | Description |
 |---------|----------|-------------|
@@ -64,7 +64,7 @@ Commands will use your bot's name: `nova help`, `nova follow`, `nova mine iron`,
 
 📖 **Full Phase 22 documentation:** [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md)
 
-## ✨ SOUL.md Integration (NEW!)
+## ✨ SOUL.md Integration
 
 The bot can inherit your OpenClaw agent's personality, values, and boundaries from SOUL.md!
 
@@ -430,7 +430,7 @@ Never engage in unnecessary combat.
 
 See [`examples/souls/`](examples/souls/) for more templates.
 
-## 🤖 Multi-Bot Coordination (NEW!)
+## 🤖 Multi-Bot Coordination
 
 Run multiple bots that automatically discover and coordinate with each other!
 

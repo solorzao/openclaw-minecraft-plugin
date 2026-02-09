@@ -3583,12 +3583,12 @@ bot.on('chat', (username, message) => {
   }
 
   // Basic commands - all go through agency system
-  if (msg === 'nova follow') {
+  if (msg === `${cmd} follow`) {
     const request = { action: 'follow', username, distance: 2, originalMessage: message };
     processExternalRequest(request, username);
     return;
   }
-  if (msg === 'nova stop') {
+  if (msg === `${cmd} stop`) {
     // Stop is special - always accept, clears everything
     currentAutonomousGoal = null;
     requestQueue = [];
@@ -3596,17 +3596,17 @@ bot.on('chat', (username, message) => {
     bot.chat('Stopping. Returning to my goals...');
     return;
   }
-  if (msg === 'nova gather wood') {
+  if (msg === `${cmd} gather wood`) {
     const request = { action: 'goal', goal: 'gather_wood', originalMessage: message };
     processExternalRequest(request, username);
     return;
   }
-  if (msg === 'nova explore') {
+  if (msg === `${cmd} explore`) {
     const request = { action: 'goal', goal: 'explore', originalMessage: message };
     processExternalRequest(request, username);
     return;
   }
-  if (msg.startsWith('nova goto ') && msg.split(' ').length === 5) {
+  if (msg.startsWith(`${cmd} goto `) && msg.split(' ').length === 5) {
     const parts = msg.split(/\s+/);
     const x = parseInt(parts[2]);
     const y = parseInt(parts[3]);
@@ -3619,24 +3619,24 @@ bot.on('chat', (username, message) => {
   }
   
   // Block interaction (Phase 5)
-  if (msg === 'nova dig' || msg === 'nova mine') {
+  if (msg === `${cmd} dig` || msg === `${cmd} mine`) {
     enqueueCommands([{ action: 'dig', direction: 'front' }]);
     bot.chat('Mining block!');
   }
-  if (msg === 'nova dig below') {
+  if (msg === `${cmd} dig below`) {
     enqueueCommands([{ action: 'dig', direction: 'below' }]);
   }
-  if (msg.startsWith('nova place ')) {
-    const blockType = msg.replace('nova place ', '').trim();
+  if (msg.startsWith(`${cmd} place `)) {
+    const blockType = msg.replace(`${cmd} place `, '').trim();
     if (blockType) {
       enqueueCommands([{ action: 'place', blockType }]);
     }
   }
-  if (msg.startsWith('nova equip ')) {
-    const item = msg.replace('nova equip ', '').trim();
+  if (msg.startsWith(`${cmd} equip `)) {
+    const item = msg.replace(`${cmd} equip `, '').trim();
     if (item) enqueueCommands([{ action: 'equip', item }]);
   }
-  if (msg === 'nova inventory' || msg === 'nova inv') {
+  if (msg === `${cmd} inventory` || msg === `${cmd} inv`) {
     const items = bot.inventory.items();
     if (items.length === 0) {
       bot.chat('Inventory empty!');
@@ -3647,18 +3647,18 @@ bot.on('chat', (username, message) => {
   }
   
   // Combat (Phase 6) - evaluated due to impact
-  if (msg === 'nova attack' || msg === 'nova fight') {
+  if (msg === `${cmd} attack` || msg === `${cmd} fight`) {
     const request = { action: 'attack', originalMessage: message };
     processExternalRequest(request, username);
     return;
   }
-  if (msg.startsWith('nova attack ')) {
-    const target = msg.replace('nova attack ', '').trim();
+  if (msg.startsWith(`${cmd} attack `)) {
+    const target = msg.replace(`${cmd} attack `, '').trim();
     const request = { action: 'attack', target, originalMessage: message };
     processExternalRequest(request, username);
     return;
   }
-  if (msg === 'nova retreat') {
+  if (msg === `${cmd} retreat`) {
     // Retreat is always accepted - survival action
     stopCombat();
     stopHunting();
@@ -3667,22 +3667,22 @@ bot.on('chat', (username, message) => {
   }
 
   // Phase 8: Hunger/Food - evaluated
-  if (msg === 'nova find food' || msg === 'nova hunt') {
+  if (msg === `${cmd} find food` || msg === `${cmd} hunt`) {
     const request = { action: 'find_food', originalMessage: message };
     processExternalRequest(request, username);
     return;
   }
-  if (msg === 'nova cook' || msg === 'nova cook food') {
+  if (msg === `${cmd} cook` || msg === `${cmd} cook food`) {
     const request = { action: 'cook_food', originalMessage: message };
     processExternalRequest(request, username);
     return;
   }
-  if (msg === 'nova eat') {
+  if (msg === `${cmd} eat`) {
     // Eating is always allowed - survival action
     enqueueCommands([{ action: 'eat' }]);
     return;
   }
-  if (msg === 'nova status') {
+  if (msg === `${cmd} status`) {
     const trust = getTrustLevel(username);
     const current = currentAutonomousGoal ? currentAutonomousGoal.action : 'idle';
     bot.chat(`HP: ${Math.floor(bot.health)}/20, Food: ${bot.food}/20 | Current: ${current} | Your trust: ${trust}`);
@@ -3690,8 +3690,8 @@ bot.on('chat', (username, message) => {
   }
 
   // Phase 9: Crafting - evaluated
-  if (msg.startsWith('nova craft ')) {
-    const itemName = msg.replace('nova craft ', '').trim();
+  if (msg.startsWith(`${cmd} craft `)) {
+    const itemName = msg.replace(`${cmd} craft `, '').trim();
     const parts = itemName.split(' ');
     let count = 1;
     let item = itemName;
@@ -3705,8 +3705,8 @@ bot.on('chat', (username, message) => {
   }
 
   // Phase 10: Mining - goes through agency (resource-intensive)
-  if (msg.startsWith('nova mine ')) {
-    const resource = msg.replace('nova mine ', '').trim();
+  if (msg.startsWith(`${cmd} mine `)) {
+    const resource = msg.replace(`${cmd} mine `, '').trim();
     const parts = resource.split(' ');
     let count = 16;
     let res = resource;
@@ -3720,13 +3720,13 @@ bot.on('chat', (username, message) => {
   }
 
   // Phase 11: Sleep
-  if (msg === 'nova sleep' || msg === 'nova bed') {
+  if (msg === `${cmd} sleep` || msg === `${cmd} bed`) {
     enqueueCommands([{ action: 'sleep' }]);
   }
 
   // Phase 12: Building - evaluated (resource-intensive)
-  if (msg.startsWith('nova build ')) {
-    const parts = msg.replace('nova build ', '').trim().split(' ');
+  if (msg.startsWith(`${cmd} build `)) {
+    const parts = msg.replace(`${cmd} build `, '').trim().split(' ');
     const template = parts[0];
     const blockType = parts[1] || 'cobblestone';
     const request = { action: 'build', template, blockType, originalMessage: message };
@@ -3735,66 +3735,66 @@ bot.on('chat', (username, message) => {
   }
 
   // Phase 13: Storage - evaluated
-  if (msg === 'nova store' || msg === 'nova store items') {
+  if (msg === `${cmd} store` || msg === `${cmd} store items`) {
     const request = { action: 'store_items', originalMessage: message };
     processExternalRequest(request, username);
     return;
   }
-  if (msg.startsWith('nova retrieve ')) {
-    const items = msg.replace('nova retrieve ', '').trim().split(' ');
+  if (msg.startsWith(`${cmd} retrieve `)) {
+    const items = msg.replace(`${cmd} retrieve `, '').trim().split(' ');
     const request = { action: 'retrieve_items', items, originalMessage: message };
     processExternalRequest(request, username);
     return;
   }
 
   // Phase 14: World Memory
-  if (msg.startsWith('nova mark ')) {
-    const name = msg.replace('nova mark ', '').trim().replace(/ /g, '_');
+  if (msg.startsWith(`${cmd} mark `)) {
+    const name = msg.replace(`${cmd} mark `, '').trim().replace(/ /g, '_');
     enqueueCommands([{ action: 'mark_location', name }]);
   }
-  if (msg.startsWith('nova goto mark ') || msg.startsWith('nova go to ')) {
-    const name = msg.replace('nova goto mark ', '').replace('nova go to ', '').trim().replace(/ /g, '_');
+  if (msg.startsWith(`${cmd} goto mark `) || msg.startsWith(`${cmd} go to `)) {
+    const name = msg.replace(`${cmd} goto mark `, '').replace(`${cmd} go to `, '').trim().replace(/ /g, '_');
     enqueueCommands([{ action: 'goto_landmark', name }]);
   }
-  if (msg === 'nova set home') {
+  if (msg === `${cmd} set home`) {
     enqueueCommands([{ action: 'set_home' }]);
   }
-  if (msg === 'nova go home') {
+  if (msg === `${cmd} go home`) {
     enqueueCommands([{ action: 'goto_landmark', name: 'home' }]);
     bot.chat('Going home!');
   }
-  if (msg === 'nova landmarks' || msg === 'nova marks') {
+  if (msg === `${cmd} landmarks` || msg === `${cmd} marks`) {
     const marks = Object.keys(worldMemory.landmarks).join(', ') || 'none';
     bot.chat(`Landmarks: ${marks}`);
   }
 
   // Phase 15: Trading - evaluated
-  if (msg === 'nova trade') {
+  if (msg === `${cmd} trade`) {
     const request = { action: 'trade', index: -1, originalMessage: message };
     processExternalRequest(request, username);
     return;
   }
-  if (msg.startsWith('nova trade ')) {
-    const index = parseInt(msg.replace('nova trade ', '').trim());
+  if (msg.startsWith(`${cmd} trade `)) {
+    const index = parseInt(msg.replace(`${cmd} trade `, '').trim());
     const request = { action: 'trade', index, originalMessage: message };
     processExternalRequest(request, username);
     return;
   }
 
   // Phase 16: Potions/Enchanting - evaluated
-  if (msg === 'nova brew' || msg === 'nova potion') {
+  if (msg === `${cmd} brew` || msg === `${cmd} potion`) {
     const request = { action: 'brew', originalMessage: message };
     processExternalRequest(request, username);
     return;
   }
-  if (msg === 'nova enchant') {
+  if (msg === `${cmd} enchant`) {
     const request = { action: 'enchant', originalMessage: message };
     processExternalRequest(request, username);
     return;
   }
 
   // Phase 20: Autonomous Behavior Control
-  if (msg === 'nova auto' || msg === 'nova autonomous') {
+  if (msg === `${cmd} auto` || msg === `${cmd} autonomous`) {
     const status = AUTONOMOUS_CONFIG.enabled ? 'ON' : 'OFF';
     const phase = worldMemory.autonomousProgress.phase;
     const goal = worldMemory.autonomousProgress.currentGoal;
@@ -3803,7 +3803,7 @@ bot.on('chat', (username, message) => {
   }
   
   // Trust management
-  if (msg === 'nova trust me') {
+  if (msg === `${cmd} trust me`) {
     // Only first person to claim owner, or existing owner can set
     const existingOwner = Object.entries(knownEntities).find(([_, v]) => v.trust === TRUST_LEVELS.OWNER);
     if (!existingOwner) {
@@ -3815,13 +3815,13 @@ bot.on('chat', (username, message) => {
       bot.chat(`I already have an owner. Ask ${existingOwner[0]} to change it.`);
     }
   }
-  if (msg.startsWith('nova trust ') && msg !== 'nova trust me') {
+  if (msg.startsWith(`${cmd} trust `) && msg !== `${cmd} trust me`) {
     const trust = getTrustLevel(username);
     if (trust !== TRUST_LEVELS.OWNER) {
       bot.chat("Only my owner can set trust levels.");
       return;
     }
-    const parts = msg.replace('nova trust ', '').trim().split(' ');
+    const parts = msg.replace(`${cmd} trust `, '').trim().split(' ');
     if (parts.length >= 2) {
       const targetPlayer = parts[0];
       const level = parts[1].toLowerCase();
@@ -3834,34 +3834,34 @@ bot.on('chat', (username, message) => {
       }
     }
   }
-  if (msg === 'nova who trusts') {
+  if (msg === `${cmd} who trusts`) {
     const trusted = Object.entries(knownEntities).map(([name, data]) => `${name}:${data.trust}`).join(', ') || 'nobody yet';
     bot.chat(`Trust list: ${trusted}`);
   }
-  if (msg === 'nova auto on' || msg === 'nova autonomous on') {
+  if (msg === `${cmd} auto on` || msg === `${cmd} autonomous on`) {
     AUTONOMOUS_CONFIG.enabled = true;
     startAutonomousBehavior();
     bot.chat('Autonomous behavior enabled! I\'ll pursue goals independently.');
   }
-  if (msg === 'nova auto off' || msg === 'nova autonomous off') {
+  if (msg === `${cmd} auto off` || msg === `${cmd} autonomous off`) {
     AUTONOMOUS_CONFIG.enabled = false;
     stopAutonomousBehavior();
     bot.chat('Autonomous behavior disabled. Waiting for commands.');
   }
-  if (msg.startsWith('nova set goal ')) {
-    const goalName = msg.replace('nova set goal ', '').trim().replace(/ /g, '_');
+  if (msg.startsWith(`${cmd} set goal `)) {
+    const goalName = msg.replace(`${cmd} set goal `, '').trim().replace(/ /g, '_');
     setAutonomousGoal(goalName);
   }
-  if (msg === 'nova goals') {
+  if (msg === `${cmd} goals`) {
     const goals = Object.keys(GOAL_PHASES).join(', ');
     bot.chat(`Available goals: ${goals}`);
   }
-  if (msg === 'nova phase') {
+  if (msg === `${cmd} phase`) {
     const phase = worldMemory.autonomousProgress.phase;
     const phaseInfo = getCurrentPhaseInfo();
     bot.chat(`Current phase: ${phase} - ${phaseInfo.description}`);
   }
-  if (msg === 'nova progress') {
+  if (msg === `${cmd} progress`) {
     const progress = worldMemory.autonomousProgress;
     bot.chat(`Goal: ${progress.currentGoal} | Phase: ${progress.phase}`);
     setTimeout(() => {
@@ -3871,7 +3871,7 @@ bot.on('chat', (username, message) => {
   }
   
   // Agency introspection
-  if (msg === 'nova why' || msg === 'nova explain') {
+  if (msg === `${cmd} why` || msg === `${cmd} explain`) {
     const phase = worldMemory.autonomousProgress.phase;
     const phaseInfo = getCurrentPhaseInfo();
     const current = currentAutonomousGoal;
@@ -3888,7 +3888,7 @@ bot.on('chat', (username, message) => {
     }
   }
   
-  if (msg === 'nova queue') {
+  if (msg === `${cmd} queue`) {
     if (requestQueue.length === 0) {
       bot.chat("My request queue is empty.");
     } else {
@@ -3897,7 +3897,7 @@ bot.on('chat', (username, message) => {
     }
   }
   
-  if (msg === 'nova clear queue') {
+  if (msg === `${cmd} clear queue`) {
     const trust = getTrustLevel(username);
     if (trust === TRUST_LEVELS.OWNER || trust === TRUST_LEVELS.FRIEND) {
       const count = requestQueue.length;
@@ -3909,34 +3909,34 @@ bot.on('chat', (username, message) => {
   }
 
   // Phase 17: Block Activation (CRITICAL)
-  if (msg === 'nova activate' || msg === 'nova use' || msg === 'nova click') {
+  if (msg === `${cmd} activate` || msg === `${cmd} use` || msg === `${cmd} click`) {
     enqueueCommands([{ action: 'activate' }]);
     bot.chat('Activating block in front of me...');
   }
-  if (msg === 'nova door' || msg === 'nova open') {
+  if (msg === `${cmd} door` || msg === `${cmd} open`) {
     enqueueCommands([{ action: 'activate' }]);
     bot.chat('Opening/closing...');
   }
 
   // Phase 18: Mount/Dismount (HIGH-VALUE)
-  if (msg === 'nova mount' || msg === 'nova ride') {
+  if (msg === `${cmd} mount` || msg === `${cmd} ride`) {
     enqueueCommands([{ action: 'mount' }]);
     bot.chat('Mounting nearby entity...');
   }
-  if (msg === 'nova dismount' || msg === 'nova get off') {
+  if (msg === `${cmd} dismount` || msg === `${cmd} get off`) {
     enqueueCommands([{ action: 'dismount' }]);
     bot.chat('Dismounting...');
   }
 
   // Phase 19: Fishing (HIGH-VALUE) - evaluated
-  if (msg === 'nova fish' || msg === 'nova fishing') {
+  if (msg === `${cmd} fish` || msg === `${cmd} fishing`) {
     const request = { action: 'fish', originalMessage: message };
     processExternalRequest(request, username);
     return;
   }
   
   // Agency negotiation responses
-  if (msg === 'nova okay' || msg === 'nova yes' || msg === 'nova deal') {
+  if (msg === `${cmd} okay` || msg === `${cmd} yes` || msg === `${cmd} deal`) {
     // Accept a counter-proposal - process queued request immediately
     if (requestQueue.length > 0) {
       const next = requestQueue.shift();
@@ -3949,7 +3949,7 @@ bot.on('chat', (username, message) => {
   }
   
   // Override/insist commands - for when requester understands the trade-off and wants to proceed anyway
-  if (msg === 'nova insist' || msg === 'nova urgent' || msg === 'nova do it' || msg === 'nova do it anyway') {
+  if (msg === `${cmd} insist` || msg === `${cmd} urgent` || msg === `${cmd} do it` || msg === `${cmd} do it anyway`) {
     const trust = getTrustLevel(username);
     if (trust !== TRUST_LEVELS.OWNER && trust !== TRUST_LEVELS.FRIEND) {
       bot.chat("Only my owner or friends can insist on overriding my current task.");
@@ -3973,7 +3973,7 @@ bot.on('chat', (username, message) => {
   }
   
   // "It can wait" - user acknowledges they'll wait
-  if (msg === 'nova it can wait' || msg === 'nova no rush' || msg === 'nova finish first') {
+  if (msg === `${cmd} it can wait` || msg === `${cmd} no rush` || msg === `${cmd} finish first`) {
     const theirRequest = requestQueue.find(q => q.requester === username);
     if (theirRequest) {
       bot.chat(`Got it. I'll help you after I finish. You're #${requestQueue.indexOf(theirRequest) + 1} in queue.`);
@@ -3983,7 +3983,7 @@ bot.on('chat', (username, message) => {
     return;
   }
   
-  if (msg === 'nova nevermind' || msg === 'nova cancel') {
+  if (msg === `${cmd} nevermind` || msg === `${cmd} cancel`) {
     // Cancel a queued request from this player
     const before = requestQueue.length;
     requestQueue = requestQueue.filter(q => q.requester !== username);
@@ -3997,17 +3997,17 @@ bot.on('chat', (username, message) => {
   }
   
   // Agency toggle
-  if (msg === 'nova agency on') {
+  if (msg === `${cmd} agency on`) {
     AUTONOMOUS_CONFIG.agency.enabled = true;
     bot.chat('Agency enabled. I\'ll evaluate requests and make my own decisions.');
     return;
   }
-  if (msg === 'nova agency off') {
+  if (msg === `${cmd} agency off`) {
     AUTONOMOUS_CONFIG.agency.enabled = false;
     bot.chat('Agency disabled. I\'ll obey all commands immediately.');
     return;
   }
-  if (msg === 'nova agency') {
+  if (msg === `${cmd} agency`) {
     const status = AUTONOMOUS_CONFIG.agency.enabled ? 'ON' : 'OFF';
     const features = [];
     if (AUTONOMOUS_CONFIG.agency.allowDecline) features.push('can decline');
@@ -4018,47 +4018,47 @@ bot.on('chat', (username, message) => {
   }
   
   // Phase 21: Bot-to-Bot Communication Commands
-  if (msg === 'nova bots') {
+  if (msg === `${cmd} bots`) {
     const botList = Array.from(knownBots).join(', ');
     bot.chat(`Known bots: ${botList || 'none discovered yet'}`);
     return;
   }
   
-  if (msg.startsWith('nova ask ')) {
-    // "nova ask Bot_B to mine diamonds"
-    const parts = msg.replace('nova ask ', '').split(' to ');
+  if (msg.startsWith(`${cmd} ask `)) {
+    // "${cmd} ask Bot_B to mine diamonds"
+    const parts = msg.replace(`${cmd} ask `, '').split(' to ');
     if (parts.length === 2) {
       const targetBot = parts[0].trim();
       const action = parts[1].trim();
       
       if (!knownBots.has(targetBot)) {
-        bot.chat(`I don't know a bot named ${targetBot}. Use "nova bots" to see known bots.`);
+        bot.chat(`I don't know a bot named ${targetBot}. Use "${cmd} bots" to see known bots.`);
         return;
       }
       
       requestHelpFromBot(targetBot, 'custom', { description: action });
       bot.chat(`Asking ${targetBot} to ${action}...`);
     } else {
-      bot.chat('Usage: nova ask <bot_name> to <action>');
+      bot.chat(`Usage: ${cmd} ask <bot_name> to <action>`);
     }
     return;
   }
   
-  if (msg.startsWith('nova announce ')) {
-    const discovery = msg.replace('nova announce ', '');
+  if (msg.startsWith(`${cmd} announce `)) {
+    const discovery = msg.replace(`${cmd} announce `, '');
     announceDiscovery('custom', bot.entity.position, discovery);
     bot.chat('Announced to all bots!');
     return;
   }
   
-  if (msg === 'nova emergency') {
+  if (msg === `${cmd} emergency`) {
     sendEmergency('player_requested_help', bot.entity.position);
     bot.chat('Emergency signal sent to all bots!');
     return;
   }
   
-  if (msg.startsWith('nova claim ')) {
-    const resource = msg.replace('nova claim ', '');
+  if (msg.startsWith(`${cmd} claim `)) {
+    const resource = msg.replace(`${cmd} claim `, '');
     claimResource(resource, {
       x: Math.floor(bot.entity.position.x),
       y: Math.floor(bot.entity.position.y),
@@ -4068,7 +4068,7 @@ bot.on('chat', (username, message) => {
     return;
   }
   
-  if (msg === 'nova claims') {
+  if (msg === `${cmd} claims`) {
     if (!worldMemory.claims || Object.keys(worldMemory.claims).length === 0) {
       bot.chat('No claims recorded.');
     } else {
@@ -4080,9 +4080,9 @@ bot.on('chat', (username, message) => {
     return;
   }
   
-  if (msg.startsWith('nova whisper ')) {
-    // "nova whisper Bot_B hello there"
-    const parts = msg.replace('nova whisper ', '').split(' ');
+  if (msg.startsWith(`${cmd} whisper `)) {
+    // "${cmd} whisper Bot_B hello there"
+    const parts = msg.replace(`${cmd} whisper `, '').split(' ');
     if (parts.length >= 2) {
       const targetBot = parts[0];
       const whisperMsg = parts.slice(1).join(' ');
@@ -4100,7 +4100,7 @@ bot.on('chat', (username, message) => {
       }
       bot.chat(`Whispered to ${targetBot}.`);
     } else {
-      bot.chat('Usage: nova whisper <player> <message>');
+      bot.chat(`Usage: ${cmd} whisper <player> <message>`);
     }
     return;
   }
@@ -4110,47 +4110,47 @@ bot.on('chat', (username, message) => {
   // ==========================================
 
   // Feature 1: Vehicle Control 🚤
-  if (msg.startsWith('nova steer ')) {
-    const direction = msg.replace('nova steer ', '').trim();
+  if (msg.startsWith(`${cmd} steer `)) {
+    const direction = msg.replace(`${cmd} steer `, '').trim();
     enqueueCommands([{ action: 'steer', direction }]);
     return;
   }
-  if (msg === 'nova stop vehicle' || msg === 'nova vehicle stop') {
+  if (msg === `${cmd} stop vehicle` || msg === `${cmd} vehicle stop`) {
     startVehicleControl('stop');
     bot.chat('Stopping vehicle.');
     return;
   }
 
   // Feature 2: Entity Interaction 🐑
-  if (msg === 'nova breed' || msg.startsWith('nova breed ')) {
+  if (msg === `${cmd} breed` || msg.startsWith(`${cmd} breed `)) {
     const animal = msg.includes(' ') ? msg.split(' ')[2] : 'cow';
     enqueueCommands([{ action: 'breed', animal }]);
     bot.chat(`Breeding ${animal}s...`);
     return;
   }
-  if (msg === 'nova shear' || msg === 'nova shear sheep') {
+  if (msg === `${cmd} shear` || msg === `${cmd} shear sheep`) {
     enqueueCommands([{ action: 'shear' }]);
     bot.chat('Shearing sheep...');
     return;
   }
-  if (msg === 'nova milk' || msg === 'nova milk cow') {
+  if (msg === `${cmd} milk` || msg === `${cmd} milk cow`) {
     enqueueCommands([{ action: 'milk' }]);
     bot.chat('Milking cow...');
     return;
   }
 
   // Feature 3: Item Dropping 📦
-  if (msg.startsWith('nova drop ')) {
-    const parts = msg.replace('nova drop ', '').split(' ');
+  if (msg.startsWith(`${cmd} drop `)) {
+    const parts = msg.replace(`${cmd} drop `, '').split(' ');
     const itemType = parts[0];
     const count = parts[1] ? parseInt(parts[1]) : 1;
     enqueueCommands([{ action: 'drop', item: itemType, count }]);
     bot.chat(`Dropping ${count}x ${itemType}...`);
     return;
   }
-  if (msg.startsWith('nova give ')) {
-    // "nova give Wookiee_23 iron_ingot 10"
-    const parts = msg.replace('nova give ', '').split(' ');
+  if (msg.startsWith(`${cmd} give `)) {
+    // "${cmd} give Wookiee_23 iron_ingot 10"
+    const parts = msg.replace(`${cmd} give `, '').split(' ');
     if (parts.length >= 2) {
       const target = parts[0];
       const itemType = parts[1];
@@ -4158,14 +4158,14 @@ bot.on('chat', (username, message) => {
       enqueueCommands([{ action: 'give', target, item: itemType, count }]);
       bot.chat(`Giving ${count}x ${itemType} to ${target}...`);
     } else {
-      bot.chat('Usage: nova give <player> <item> [count]');
+      bot.chat(`Usage: ${cmd} give <player> <item> [count]`);
     }
     return;
   }
 
   // Feature 4: Smooth Look Control 👀
-  if (msg.startsWith('nova look at ')) {
-    const targetName = msg.replace('nova look at ', '');
+  if (msg.startsWith(`${cmd} look at `)) {
+    const targetName = msg.replace(`${cmd} look at `, '');
     const player = Object.values(bot.players).find(p => 
       p.username.toLowerCase() === targetName.toLowerCase()
     );
@@ -4180,7 +4180,7 @@ bot.on('chat', (username, message) => {
   }
 
   // Feature 5: Sound Awareness 👂
-  if (msg === 'nova sounds') {
+  if (msg === `${cmd} sounds`) {
     const sounds = recentSounds.slice(-5).map(s => 
       `${s.name.split('.').pop()} (${Math.floor((Date.now() - s.timestamp) / 1000)}s ago)`
     ).join(', ');
@@ -4189,36 +4189,36 @@ bot.on('chat', (username, message) => {
   }
 
   // Feature 6: Experience System ⭐
-  if (msg === 'nova xp' || msg === 'nova level' || msg === 'nova experience') {
+  if (msg === `${cmd} xp` || msg === `${cmd} level` || msg === `${cmd} experience`) {
     bot.chat(`Level ${bot.experience.level} (${Math.floor(bot.experience.progress * 100)}% to next)`);
     return;
   }
-  if (msg === 'nova farm xp') {
+  if (msg === `${cmd} farm xp`) {
     enqueueCommands([{ action: 'farm_xp' }]);
     bot.chat('Farming XP...');
     return;
   }
 
   // Feature 7: Book Writing 📖
-  if (msg === 'nova write log' || msg === 'nova write book') {
+  if (msg === `${cmd} write log` || msg === `${cmd} write book`) {
     enqueueCommands([{ action: 'write_log' }]);
     return;
   }
 
   // Feature 8: Block Update Subscriptions 🔔
-  if (msg === 'nova watch door') {
+  if (msg === `${cmd} watch door`) {
     enqueueCommands([{ action: 'watch_door' }]);
     return;
   }
-  if (msg === 'nova watch chest') {
+  if (msg === `${cmd} watch chest`) {
     enqueueCommands([{ action: 'watch_chest' }]);
     return;
   }
-  if (msg === 'nova unwatch' || msg === 'nova stop watching') {
+  if (msg === `${cmd} unwatch` || msg === `${cmd} stop watching`) {
     enqueueCommands([{ action: 'unwatch' }]);
     return;
   }
-  if (msg === 'nova watching') {
+  if (msg === `${cmd} watching`) {
     const count = watchedBlocks.size;
     if (count === 0) {
       bot.chat("I'm not watching any blocks.");
@@ -4234,15 +4234,15 @@ bot.on('chat', (username, message) => {
   // ==========================================
 
   // Feature 1: Furnace Smelting 🔥
-  if (msg.startsWith('nova smelt ')) {
-    const parts = msg.replace('nova smelt ', '').trim().split(' ');
+  if (msg.startsWith(`${cmd} smelt `)) {
+    const parts = msg.replace(`${cmd} smelt `, '').trim().split(' ');
     const item = parts[0];
     const count = parts[1] ? parseInt(parts[1]) : null;
     const request = { action: 'smelt', item, count, originalMessage: message };
     processExternalRequest(request, username);
     return;
   }
-  if (msg === 'nova smelt') {
+  if (msg === `${cmd} smelt`) {
     // Try to smelt any smeltable item
     const smeltable = bot.inventory.items().find(i => 
       Object.keys(SMELTABLE_ITEMS).includes(i.name)
@@ -4257,34 +4257,34 @@ bot.on('chat', (username, message) => {
   }
 
   // Feature 2: Crop Farming 🌾
-  if (msg === 'nova till' || msg === 'nova till soil') {
+  if (msg === `${cmd} till` || msg === `${cmd} till soil`) {
     const request = { action: 'till', originalMessage: message };
     processExternalRequest(request, username);
     return;
   }
-  if (msg.startsWith('nova plant ')) {
-    const crop = msg.replace('nova plant ', '').trim();
+  if (msg.startsWith(`${cmd} plant `)) {
+    const crop = msg.replace(`${cmd} plant `, '').trim();
     const request = { action: 'plant', crop, originalMessage: message };
     processExternalRequest(request, username);
     return;
   }
-  if (msg === 'nova harvest') {
+  if (msg === `${cmd} harvest`) {
     const request = { action: 'harvest', autoReplant: true, originalMessage: message };
     processExternalRequest(request, username);
     return;
   }
-  if (msg.startsWith('nova farm ')) {
-    const crop = msg.replace('nova farm ', '').trim() || 'wheat';
+  if (msg.startsWith(`${cmd} farm `)) {
+    const crop = msg.replace(`${cmd} farm `, '').trim() || 'wheat';
     const request = { action: 'farm', crop, originalMessage: message };
     processExternalRequest(request, username);
     return;
   }
-  if (msg === 'nova farm') {
+  if (msg === `${cmd} farm`) {
     const request = { action: 'farm', crop: 'wheat', originalMessage: message };
     processExternalRequest(request, username);
     return;
   }
-  if (msg === 'nova farm status') {
+  if (msg === `${cmd} farm status`) {
     const plots = farmPlots.length;
     const hasHoe = bot.inventory.items().some(i => HOE_TYPES.includes(i.name));
     const seeds = Object.values(CROP_DATA)
@@ -4297,28 +4297,28 @@ bot.on('chat', (username, message) => {
   }
 
   // Feature 3: Ranged Combat 🏹
-  if (msg.startsWith('nova shoot ')) {
-    const target = msg.replace('nova shoot ', '').trim();
+  if (msg.startsWith(`${cmd} shoot `)) {
+    const target = msg.replace(`${cmd} shoot `, '').trim();
     const request = { action: 'shoot', target, originalMessage: message };
     processExternalRequest(request, username);
     return;
   }
-  if (msg === 'nova shoot') {
+  if (msg === `${cmd} shoot`) {
     const request = { action: 'shoot', target: null, originalMessage: message };
     processExternalRequest(request, username);
     return;
   }
-  if (msg === 'nova block' || msg === 'nova shield') {
+  if (msg === `${cmd} block` || msg === `${cmd} shield`) {
     enqueueCommands([{ action: 'block_shield' }]);
     bot.chat('Raising shield!');
     return;
   }
-  if (msg === 'nova stop blocking' || msg === 'nova unblock') {
+  if (msg === `${cmd} stop blocking` || msg === `${cmd} unblock`) {
     stopBlocking();
     bot.chat('Lowered shield.');
     return;
   }
-  if (msg === 'nova ranged status' || msg === 'nova combat status') {
+  if (msg === `${cmd} ranged status` || msg === `${cmd} combat status`) {
     const hasBow = bot.inventory.items().some(i => i.name === 'bow' || i.name === 'crossbow');
     const arrows = bot.inventory.items().find(i => i.name.includes('arrow'));
     const hasShield = bot.inventory.items().some(i => i.name === 'shield');
@@ -4327,17 +4327,17 @@ bot.on('chat', (username, message) => {
   }
 
   // Feature 4: Inventory Management 📦
-  if (msg === 'nova inv status' || msg === 'nova inventory status') {
+  if (msg === `${cmd} inv status` || msg === `${cmd} inventory status`) {
     const usage = getInventoryUsage();
     const nearChest = bot.findBlock({ matching: b => b.name === 'chest', maxDistance: 64 }) !== null;
     bot.chat(`Inventory: ${usage}/36 slots | Nearby chest: ${nearChest ? 'yes' : 'no'}`);
     return;
   }
-  if (msg === 'nova manage inventory' || msg === 'nova clean inventory') {
+  if (msg === `${cmd} manage inventory` || msg === `${cmd} clean inventory`) {
     autoManageInventory();
     return;
   }
-  if (msg === 'nova dump junk' || msg === 'nova drop junk') {
+  if (msg === `${cmd} dump junk` || msg === `${cmd} drop junk`) {
     (async () => {
       const items = bot.inventory.items();
       let dropped = 0;

@@ -3235,7 +3235,6 @@ async function executeAutonomousAction(action) {
   
   if (isPathfinderAction) {
     autonomousGoalBusy = true;
-    console.log('[AUTONOMOUS] Setting busy=true for', action.action, action.goal);
     
     // FIX: Set safety timeout to clear stuck goals
     if (autonomousGoalTimeout) clearTimeout(autonomousGoalTimeout);
@@ -3321,7 +3320,6 @@ function startAutonomousBehavior() {
   autonomousInterval = setInterval(async () => {
     // FIX: Prevent concurrent interval executions (race condition)
     if (autonomousLoopLock) {
-      console.log('[AUTONOMOUS] Skipping: loop lock active');
       return;
     }
     autonomousLoopLock = true;
@@ -3335,7 +3333,6 @@ function startAutonomousBehavior() {
       
       // FIX: Check busy flag - if pathfinder is working, don't spawn new goals
       if (autonomousGoalBusy) {
-        console.log('[AUTONOMOUS] Skipping: busy with', currentAutonomousGoal?.goal || currentAutonomousGoal?.action);
         return;
       }
       

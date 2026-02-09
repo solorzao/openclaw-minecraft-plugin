@@ -24,3 +24,6 @@ Thumbs.db
 
 # Test files
 test-*.json
+
+# Environment variables (contains sensitive config)
+.env

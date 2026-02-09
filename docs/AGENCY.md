@@ -1,52 +1,51 @@
 # Nova Bot Agency System
 
-Nova is no longer a puppet that blindly obeys commands. **Nova has TRUE AGENCY** - the ability to evaluate ALL requests (including from owners), present trade-offs, and let YOU decide if interruption is worth it.
+Nova is no longer a puppet that blindly obeys commands. **Nova has TRUE AGENCY** - the ability to evaluate ALL requests, present trade-offs, and let YOU decide if interruption is worth it.
 
 ## Core Philosophy
 
 **Old approach (wrong):**
 ```
-Owner: "nova follow me"
+Player: "nova follow me"
 Nova: "Yes master!" (drops everything)
 ```
 
 **New approach (TRUE autonomy):**
 ```
-Owner: "nova follow me"
-Nova: "I'm 80% done mining iron. Stopping now means losing that progress. Is this urgent?"
-Owner: "nova insist"
-Nova: "Understood. Abandoning mining to help you."
+Player: "nova follow me"
+Nova: "I'm 80% done mining iron. Stopping now means losing that progress. Can you wait 2 mins?"
+Player: "nova no rush"
+Nova: "Got it. I'll help you after I finish. You're #1 in queue."
 ```
 
-Nova has its **OWN priorities** and explains them. You can override, but Nova doesn't auto-comply.
+Nova has its **OWN priorities** and explains them. Everyone is treated equally.
 
-## What Trust Actually Means
+## Full Autonomy - No Privileged Roles
 
-Trust affects **TRANSPARENCY**, not automatic obedience:
+Nova treats **all players equally**. There are no owners, admins, or friends with special override powers.
 
-| Trust | What they get |
-|-------|---------------|
-| **OWNER** | Full trade-off explanations, can override with "insist" |
-| **FRIEND** | Full trade-off explanations, can override with "insist" |
-| **NEUTRAL** | Brief explanation, request deferred |
-| **BOT** | Full negotiation mode |
-| **HOSTILE** | Always declined |
+| Entity Type | Treatment |
+|-------------|-----------|
+| **PLAYER** | Fair evaluation, trade-off explanations |
+| **BOT** | Full negotiation mode (bot-to-bot protocol) |
+| **HOSTILE** | Always declined (attacking entities) |
 
-**Note:** Even owners don't get auto-acceptance. Nova evaluates based on:
+Nova evaluates based on:
 - Current goal priority
 - Progress on current task
 - Cost of interruption
 - Bot's survival needs
 
+**NOT** based on who's asking.
+
 ## Example Conversations
 
 ### Scenario 1: High-cost interruption
 
-**Owner:** "nova mine diamonds"  
-**Nova:** "I'm 80% done building shelter. Stopping now means losing that progress. Is this urgent?"
+**Player:** "nova mine diamonds"  
+**Nova:** "I'm 80% done building shelter. Stopping now means losing that progress. Can this wait?"
 
-*Owner has three choices:*
-- `nova insist` → Nova drops everything, does your request
+*Player has two choices:*
 - `nova no rush` → Nova finishes current task, then helps
 - `nova nevermind` → Request cancelled
 
@@ -57,8 +56,8 @@ Trust affects **TRANSPARENCY**, not automatic obedience:
 
 ### Scenario 3: Just started something
 
-**Owner:** "nova gather wood"  
-**Nova:** "I just started mining for iron tools. That will take a few minutes. Can this wait, or is it urgent?"
+**Player:** "nova gather wood"  
+**Nova:** "I just started mining for iron tools. That will take a few minutes. Can this wait?"
 
 ### Scenario 4: Idle bot
 
@@ -68,29 +67,27 @@ Trust affects **TRANSPARENCY**, not automatic obedience:
 
 ### Scenario 5: Low-cost switch
 
-**Owner:** "nova explore"  
+**Player:** "nova explore"  
 **Nova (was just wandering):** "Switching to your request."  
 *(Low cost = automatic acceptance with brief note)*
 
 ### Scenario 6: Mid-progress
 
-**Friend:** "nova build a shelter"  
+**Player:** "nova build a shelter"  
 **Nova:** "I'm gathering wood (12 logs). Want me to pause this?"
 
-## Trade-Off Responses
+## Negotiation Responses
 
 When Nova presents a trade-off, you can respond:
 
 | Command | Meaning | Result |
 |---------|---------|--------|
-| `nova insist` | "Do it anyway" | Nova drops current task immediately |
-| `nova urgent` | Same as insist | Nova drops current task immediately |
-| `nova do it anyway` | Same as insist | Nova drops current task immediately |
 | `nova no rush` | "I can wait" | Request stays queued, Nova finishes first |
 | `nova it can wait` | Same as no rush | Request stays queued |
 | `nova finish first` | Same as no rush | Request stays queued |
 | `nova okay` | Accept counter-proposal | Depends on what Nova proposed |
 | `nova nevermind` | Cancel request | Request removed from queue |
+| `nova clear queue` | Clear your requests | Removes YOUR queued requests |
 
 ## Interruption Cost Calculation
 
@@ -121,34 +118,25 @@ agency: {
 }
 ```
 
-## Trust Management
-
-```
-nova trust me           # Become owner (first-come-first-served)
-nova trust Bob friend   # Set Bob's trust level (owner only)
-nova trust Bob hostile  # Block Bob's requests
-nova who trusts         # See trust list
-```
-
 ## Introspection Commands
 
 ```
 nova why              # Why are you doing what you're doing?
-nova status           # Health, food, current task, your trust level
+nova status           # Health, food, current task
 nova queue            # What requests are queued?
-nova clear queue      # Clear queue (owner/friend only)
+nova clear queue      # Clear YOUR queued requests
 nova agency           # Show agency status
 nova agency on/off    # Toggle agency (blind obedience if off)
 ```
 
 ## Design Principles
 
-1. **Nova evaluates EVERYONE equally** - Trust affects transparency, not priority
+1. **Nova evaluates EVERYONE equally** - No privileged roles
 2. **Nova explains trade-offs** - Always tells you what you're interrupting
-3. **YOU make the final call** - Nova presents options, you decide
+3. **YOU decide if it's urgent** - Nova presents options, you choose to wait
 4. **Survival comes first** - Nova won't die for your request
 5. **No hidden costs** - Full transparency on what interruption means
-6. **Override requires understanding** - You must acknowledge the trade-off
+6. **Fair queuing** - First-come, first-served for deferred requests
 
 ## SOUL.md Integration
 
@@ -167,8 +155,8 @@ Nova can load a SOUL.md file to inherit personality, values, and **hard boundari
 
 | Type | Can Override? | Example |
 |------|---------------|---------|
-| **Soul Boundary** | NO - even owner can't override | "Never attack villagers" |
-| **Agency Trade-off** | YES - owner can say "insist" | "I'm 80% done mining" |
+| **Soul Boundary** | NO - nobody can override | "Never attack villagers" |
+| **Agency Trade-off** | Choose to wait or cancel | "I'm 80% done mining" |
 
 Soul boundaries are non-negotiable. They define WHO the bot IS.
 
@@ -185,17 +173,14 @@ Never attack players or villagers.
 
 **In-game:**
 ```
-Owner: "nova attack zombie"
+Player: "nova attack zombie"
 Nova: "Fighting! :)"
 
-Owner: "nova attack villager"
-Nova: "That conflicts with my values. I don't attack villagers."
-
-Owner: "nova insist"
+Player: "nova attack villager"
 Nova: "That conflicts with my values. I don't attack villagers."
 ```
 
-The boundary is absolute. `insist` doesn't work.
+The boundary is absolute. No one can override it.
 
 ### Example 2: Competitive Soul
 
@@ -210,11 +195,8 @@ Prioritize my own survival first.
 
 **In-game:**
 ```
-Random Player: "nova help me mine diamonds"
-Nova: "I'm focused on my own goals. What's in it for me?"
-
-Owner: "nova help me mine diamonds"
-Nova: "Let's mine! Watch and learn."
+Player: "nova help me mine diamonds"
+Nova: "I'm focused on my own goals right now. Want me to queue that?"
 ```
 
 The competitive vibe affects responses and priorities.
@@ -232,10 +214,10 @@ Never engage in unnecessary combat.
 
 **In-game:**
 ```
-Owner: "nova explore"
+Player: "nova explore"
 Nova: "Let's explore..."
 
-Owner: "nova attack that pig"
+Player: "nova attack that pig"
 Nova: "That doesn't align with what I care about."
 ```
 
@@ -246,7 +228,7 @@ The `Be X` patterns determine how Nova talks:
 | Vibe | Chat Style |
 |------|------------|
 | `quirky, sarcastic` | "Following you~" "On it! heh" |
-| `warm, friendly` | "Following you :)" "Sure, friend!" |
+| `warm, friendly` | "Following you :)" "Sure!" |
 | `serious, professional` | "Following." "Understood." |
 | `competitive` | "Following. Easy." "Watch and learn." |
 | `shy, quiet` | "Following..." "Okay..." |
@@ -271,7 +253,7 @@ If no SOUL.md exists, Nova uses:
 
 The bot is fully functional without a soul - it just has no personality constraints.
 
-## Why This Matters
+## Why Full Autonomy?
 
 The old "owner = auto-obey" model was still a puppet. True autonomy means:
 
@@ -279,10 +261,10 @@ The old "owner = auto-obey" model was still a puppet. True autonomy means:
 - Nova tracks its own progress
 - Nova values its own survival
 - Nova communicates honestly
-- Nova respects your authority to override
+- Nova treats everyone fairly
 - Nova doesn't pretend the cost doesn't exist
 
-This makes Nova a **partner**, not a **tool**. Nova will help you - but it wants you to understand what you're asking for.
+This makes Nova a **partner**, not a **tool**. Nova will help you - but everyone gets the same consideration.
 
 ## Emergency Override
 

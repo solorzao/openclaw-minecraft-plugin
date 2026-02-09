@@ -66,7 +66,7 @@ _(Replace "MyBot" with your bot's persona name)_
 - **Persona**: Bot announces itself by name from SOUL.md
 - **Vibe**: Chat responses reflect personality (quirky, warm, serious, etc.)
 - **Values**: Decision-making favors aligned actions
-- **Boundaries**: HARD LIMITS - bot will decline requests that violate them, even from owners
+- **Boundaries**: HARD LIMITS - bot will decline requests that violate them (applies to everyone)
 
 **Usage:**
 ```bash
@@ -81,27 +81,26 @@ SOUL_PATH=/path/to/SOUL.md node bot.js
 
 ## 🧠 TRUE AUTONOMY - Agency System
 
-The bot evaluates **ALL requests** (even from owners) based on current state, not blind trust:
+The bot evaluates **ALL requests** based on current state - everyone is treated equally:
 
 ```
-Owner: "{bot} follow me"
-Bot: "I'm 80% done mining iron. Stopping now means losing progress. Is this urgent?"
-Owner: "{bot} insist"
-Bot: "Understood. Abandoning mining to help you."
+Player: "{bot} follow me"
+Bot: "I'm 80% done mining iron. Can you wait 2 mins or is this urgent?"
+Player: "{bot} no rush"
+Bot: "Got it. I'll help you after I finish. You're #1 in queue."
 ```
 
-| Trade-off Response | Meaning |
-|--------------------|---------|
-| `{bot} insist` | "Do it anyway" - Bot drops current task |
+| Response | Meaning |
+|----------|---------|
 | `{bot} no rush` | "I can wait" - Bot finishes first, then helps |
-| `{bot} nevermind` | Cancel the request |
+| `{bot} nevermind` | Cancel your request |
+| `{bot} okay` | Accept counter-proposal immediately |
 
 ### Quick Start
 
 ```
-{bot} trust me        # Become owner (gets full trade-off explanations)
-{bot} mine diamonds   # Request - bot explains interruption cost
-{bot} insist          # Override if urgent
+{bot} mine diamonds   # Request - bot explains if busy
+{bot} no rush         # Acknowledge you'll wait
 {bot} why             # Ask why the bot is doing what it's doing
 {bot} queue           # See deferred requests
 ```
@@ -242,16 +241,13 @@ Examples below use `{bot}` as a placeholder for your bot's name:
 {bot} mount         - Mount nearby horse/boat
 {bot} fish          - Start fishing
 
-# Agency Commands (Trade-off Responses)
-{bot} insist        - "Do it anyway" (drops current task)
+# Agency Commands (Negotiation)
 {bot} no rush       - "I can wait" (finish first)
 {bot} nevermind     - Cancel your request
 {bot} okay          - Accept counter-proposal
+{bot} clear queue   - Clear your queued requests
 
-# Trust & Introspection
-{bot} trust me      - Become owner (full explanations)
-{bot} trust X friend - Set trust level (owner only)
-{bot} who trusts    - List trust levels
+# Introspection
 {bot} why           - Why is the bot doing this?
 {bot} queue         - Show deferred requests
 {bot} agency on/off - Toggle agency (off = blind obey)

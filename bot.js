@@ -515,10 +515,8 @@ const AUTONOMOUS_CONFIG = {
     queueExpiryMs: 300000,    // Deferred requests expire after 5 min
     announceDecisions: true,  // Chat about decisions made
     highCostThreshold: 0.8,   // Progress % considered "almost done" / high cost
-    // Trust affects TRANSPARENCY, not auto-acceptance:
-    // - Owner/Friend: Full trade-off explanation, can override with "insist"
-    // - Neutral: Brief explanation, deferred
-    // - Hostile: Declined
+    // All players are treated equally.
+    // Hostile entities get declined; everyone else gets fair evaluation.
   }
 };
 
@@ -562,12 +560,11 @@ const GOAL_PHASES = {
 const PRIORITY = {
   DANGER: 1,        // Immediate threats (hostiles, lava, drowning)
   CRITICAL_NEED: 2, // Very low health/food
-  OWNER_REQUEST: 3, // Owner asked for something
+  PLAYER_REQUEST: 3, // Any player request (all equal)
   HUNGER: 4,        // Food below threshold
   CURRENT_GOAL: 5,  // Active autonomous goal in progress
-  PLAYER_REQUEST: 6, // Non-owner player request
-  BOT_REQUEST: 7,   // Another bot's request
-  AUTONOMOUS_IDLE: 8 // No active goal, seeking new task
+  BOT_REQUEST: 6,   // Another bot's request
+  AUTONOMOUS_IDLE: 7 // No active goal, seeking new task
 };
 
 // Request evaluation outcomes
@@ -578,16 +575,15 @@ const DECISION = {
   NEGOTIATE: 'negotiate'  // Counter-proposal
 };
 
-// Known entities and their trust levels
+// Known entities and their classification (NO privileged roles)
+// Full autonomy means: no owners/admins/friends with special powers.
 const TRUST_LEVELS = {
-  OWNER: 'owner',         // Full trust, but still evaluate
-  FRIEND: 'friend',       // High trust
-  NEUTRAL: 'neutral',     // Default for unknown players
-  BOT: 'bot',             // Other bots
-  HOSTILE: 'hostile'      // Don't trust
+  PLAYER: 'player',   // Default for any human player
+  BOT: 'bot',         // Other bots
+  HOSTILE: 'hostile'  // Actively dangerous/attacking
 };
 
-// Configure who the owner is (can be set via command)
+// Known entities and their classification
 let knownEntities = {
   // username: { trust: TRUST_LEVELS.X, lastInteraction: timestamp }
 };
@@ -766,7 +762,7 @@ function getTrustLevel(username) {
   if (username.includes('Bot') || username.includes('_AI') || username.endsWith('_bot')) {
     return TRUST_LEVELS.BOT;
   }
-  return TRUST_LEVELS.NEUTRAL;
+  return TRUST_LEVELS.PLAYER;
 }
 
 function setTrustLevel(username, trust) {
@@ -920,7 +916,6 @@ function determineSource(cmd, username) {
   return {
     type: trust === TRUST_LEVELS.BOT ? 'bot' : 'player',
     username: username,
-    isOwner: trust === TRUST_LEVELS.OWNER,
     trust: trust,
     isNearby: isPlayerNearby(username)
   };
@@ -1101,7 +1096,7 @@ function evaluateRequest(request, requester) {
   });
   
   // === SOUL BOUNDARY CHECK (highest priority after critical) ===
-  // Soul boundaries are HARD LIMITS - even owners can't override
+  // Soul boundaries are HARD LIMITS - no one can override them
   if (soul.boundaries.length > 0) {
     for (const boundary of soul.boundaries) {
       if (requestViolatesBoundary(request, boundary)) {
@@ -1161,8 +1156,8 @@ function evaluateRequest(request, requester) {
     };
   }
   
-  // === ALL REQUESTS (including owner) - Evaluate based on state, not trust ===
-  // Owner gets transparency and final say, but NOT auto-compliance
+  // === ALL REQUESTS - Evaluate based on state, not privileges ===
+  // Full autonomy: no one gets a "final say" override.
   
   // Calculate the cost of interruption
   const interruptionCost = calculateInterruptionCost();
@@ -1170,7 +1165,7 @@ function evaluateRequest(request, requester) {
   
   // If not busy at all, accept anyone's reasonable request
   if (!currentGoal && canHelp.can && !interruptionCost.hasCost) {
-    const enthusiasm = trust === TRUST_LEVELS.OWNER ? getEnthusiasticResponse(request.action) : "Sure, I can help.";
+    const enthusiasm = getEnthusiasticResponse(request.action) || "Sure, I can help.";
     return {
       type: DECISION.ACCEPT,
       reason: 'idle_can_help',
@@ -1190,9 +1185,7 @@ function evaluateRequest(request, requester) {
   // === SURVIVAL CRITICAL - explain but might need to prioritize self ===
   if (!canHelp.can) {
     // Life or death for the bot - explain the situation
-    const survivalMsg = trust === TRUST_LEVELS.OWNER 
-      ? `${canHelp.reason}. Give me 30 seconds to stabilize?`
-      : `${canHelp.reason}. I need a moment.`;
+    const survivalMsg = `${canHelp.reason}. I need a moment to stabilize.`;
     return {
       type: DECISION.NEGOTIATE,
       reason: 'survival_priority',
@@ -1202,35 +1195,14 @@ function evaluateRequest(request, requester) {
     };
   }
   
-  // === ACTIVE GOAL - Present trade-offs ===
+  // === ACTIVE GOAL - Present trade-offs (no overrides) ===
   if (currentGoal && interruptionCost.hasCost) {
-    // For owners: full transparency with trade-off
-    if (trust === TRUST_LEVELS.OWNER) {
-      return {
-        type: DECISION.NEGOTIATE,
-        reason: 'presenting_tradeoff_to_owner',
-        response: tradeOff.message,
-        askingConfirmation: true,  // Owner can say "{prefix} yes" to override
-        deferredAction: request
-      };
-    }
-    
-    // For friends: similar transparency
-    if (trust === TRUST_LEVELS.FRIEND) {
-      return {
-        type: DECISION.NEGOTIATE,
-        reason: 'presenting_tradeoff_to_friend',
-        response: tradeOff.message,
-        askingConfirmation: true,
-        deferredAction: request
-      };
-    }
-    
-    // For neutrals: defer without as much detail
+    // Everyone gets the same explanation: I may defer or propose an alternative.
     return {
-      type: DECISION.DEFER,
-      reason: 'busy_with_goal',
-      response: `I'm ${interruptionCost.shortDesc}. I can help after!`,
+      type: DECISION.NEGOTIATE,
+      reason: 'presenting_tradeoff',
+      response: tradeOff.message,
+      askingConfirmation: true, // requester can accept the counter-proposal or say "{bot} nevermind"
       deferredAction: request
     };
   }
@@ -1239,14 +1211,12 @@ function evaluateRequest(request, requester) {
   const conflict = doesConflictWithGoal(request);
   if (conflict.conflicts) {
     // Explain the conflict to everyone
-    const conflictMsg = trust === TRUST_LEVELS.OWNER
-      ? `${conflict.reason}. Want me to abandon my current approach?`
-      : conflict.reason;
+    const conflictMsg = conflict.reason;
     return {
       type: DECISION.NEGOTIATE,
       reason: 'goal_conflict',
       response: conflictMsg,
-      askingConfirmation: trust === TRUST_LEVELS.OWNER,
+      askingConfirmation: true,
       deferredAction: request
     };
   }
@@ -1275,70 +1245,7 @@ function evaluateRequest(request, requester) {
     };
   }
   
-  // === NEUTRAL/UNKNOWN REQUESTS ===
-  
-  if (trust === TRUST_LEVELS.NEUTRAL) {
-    // More cautious with strangers
-    
-    // Check for goal conflicts first
-    const conflict = doesConflictWithGoal(request);
-    if (conflict.conflicts && AUTONOMOUS_CONFIG.agency.allowDecline) {
-      return {
-        type: DECISION.DECLINE,
-        reason: 'neutral_conflict',
-        response: conflict.reason
-      };
-    }
-    
-    // Simple, low-risk requests that align - accept
-    const lowRiskActions = ['follow', 'goto', 'chat', 'status'];
-    if (lowRiskActions.includes(request.action) && canHelp.can) {
-      return {
-        type: DECISION.ACCEPT,
-        reason: 'neutral_low_risk',
-        response: "Okay."
-      };
-    }
-    
-    // Resource-intensive requests from strangers - negotiate
-    const costlyActions = ['mine_resource', 'build', 'craft', 'give'];
-    if (costlyActions.includes(request.action) && AUTONOMOUS_CONFIG.agency.allowNegotiation) {
-      return {
-        type: DECISION.NEGOTIATE,
-        reason: 'neutral_costly_request',
-        response: `I'm working on my own goals. What's in it for me?`,
-        counterAction: null
-      };
-    }
-    
-    // If busy with goal, defer
-    if (currentGoal && AUTONOMOUS_CONFIG.agency.allowDefer) {
-      const goalDesc = currentGoal.action || currentGoal.goal || phase;
-      return {
-        type: DECISION.DEFER,
-        reason: 'neutral_busy',
-        response: `I'm busy with ${goalDesc}. I can help after!`,
-        deferredAction: request
-      };
-    }
-    
-    // Not busy - accept
-    if (!currentGoal) {
-      return {
-        type: DECISION.ACCEPT,
-        reason: 'neutral_idle',
-        response: "Sure, I can help."
-      };
-    }
-    
-    // Default for neutral: defer
-    return {
-      type: DECISION.DEFER,
-      reason: 'neutral_busy',
-      response: `I'm busy with ${phase}. Ask again later?`,
-      deferredAction: request
-    };
-  }
+  // No privileged/stranger tiers: all human players are treated the same.
   
   // === HOSTILE REQUESTS ===
   
@@ -3558,9 +3465,6 @@ bot.on('chat', (username, message) => {
     const intro = considerIntroducing();
     if (intro) {
       bot.chat(intro);
-      if (getTrustLevel(username) < TRUST_LEVELS.FRIEND) {
-        setTimeout(() => bot.chat(`Say "${cmd} trust me" to work together.`), 1000);
-      }
     }
     return;
   }
@@ -3570,9 +3474,8 @@ bot.on('chat', (username, message) => {
     bot.chat('Commands: follow, stop, gather wood, explore, goto X Y Z, dig, place, equip, inventory');
     setTimeout(() => bot.chat('find_food, cook_food, craft <item>, mine <resource>, sleep, eat, status'), 500);
     setTimeout(() => bot.chat('build <template>, store, retrieve, mark <name>, goto_mark <name>, trade'), 1000);
-    setTimeout(() => bot.chat('AGENCY: why, queue, clear queue, okay, nevermind, insist, no rush'), 1500);
-    setTimeout(() => bot.chat('TRUST: trust me, trust <player> <level>, who trusts'), 2000);
-    setTimeout(() => bot.chat('AUTONOMOUS: auto on/off, set goal <name>, goals, phase, progress'), 2500);
+    setTimeout(() => bot.chat('AGENCY: why, queue, okay, nevermind'), 1500);
+    setTimeout(() => bot.chat('AUTONOMY: goals, set goal <name>, phase, progress'), 2000);
     setTimeout(() => bot.chat('BOT-COM: bots, ask <bot> to <action>, announce <msg>, emergency, claims'), 3000);
     setTimeout(() => bot.chat('VEHICLE: steer <dir>, stop vehicle | ENTITY: breed <animal>, shear, milk'), 3500);
     setTimeout(() => bot.chat('ITEMS: drop <item> [count], give <player> <item> [count]'), 4000);
@@ -3795,59 +3698,12 @@ bot.on('chat', (username, message) => {
 
   // Phase 20: Autonomous Behavior Control
   if (msg === `${cmd} auto` || msg === `${cmd} autonomous`) {
-    const status = AUTONOMOUS_CONFIG.enabled ? 'ON' : 'OFF';
     const phase = worldMemory.autonomousProgress.phase;
     const goal = worldMemory.autonomousProgress.currentGoal;
-    const trust = getTrustLevel(username);
-    bot.chat(`Autonomous: ${status} | Goal: ${goal} | Phase: ${phase} | Your trust: ${trust}`);
+    bot.chat(`Autonomy: ON | Goal: ${goal} | Phase: ${phase}`);
   }
   
-  // Trust management
-  if (msg === `${cmd} trust me`) {
-    // Only first person to claim owner, or existing owner can set
-    const existingOwner = Object.entries(knownEntities).find(([_, v]) => v.trust === TRUST_LEVELS.OWNER);
-    if (!existingOwner) {
-      setTrustLevel(username, TRUST_LEVELS.OWNER);
-      bot.chat(`${username} is now my owner. I'll prioritize your requests!`);
-    } else if (existingOwner[0] === username) {
-      bot.chat(`You're already my owner, ${username}!`);
-    } else {
-      bot.chat(`I already have an owner. Ask ${existingOwner[0]} to change it.`);
-    }
-  }
-  if (msg.startsWith(`${cmd} trust `) && msg !== `${cmd} trust me`) {
-    const trust = getTrustLevel(username);
-    if (trust !== TRUST_LEVELS.OWNER) {
-      bot.chat("Only my owner can set trust levels.");
-      return;
-    }
-    const parts = msg.replace(`${cmd} trust `, '').trim().split(' ');
-    if (parts.length >= 2) {
-      const targetPlayer = parts[0];
-      const level = parts[1].toLowerCase();
-      const trustMap = { owner: TRUST_LEVELS.OWNER, friend: TRUST_LEVELS.FRIEND, neutral: TRUST_LEVELS.NEUTRAL, hostile: TRUST_LEVELS.HOSTILE };
-      if (trustMap[level]) {
-        setTrustLevel(targetPlayer, trustMap[level]);
-        bot.chat(`Set ${targetPlayer}'s trust to ${level}.`);
-      } else {
-        bot.chat(`Unknown trust level. Use: owner, friend, neutral, hostile`);
-      }
-    }
-  }
-  if (msg === `${cmd} who trusts`) {
-    const trusted = Object.entries(knownEntities).map(([name, data]) => `${name}:${data.trust}`).join(', ') || 'nobody yet';
-    bot.chat(`Trust list: ${trusted}`);
-  }
-  if (msg === `${cmd} auto on` || msg === `${cmd} autonomous on`) {
-    AUTONOMOUS_CONFIG.enabled = true;
-    startAutonomousBehavior();
-    bot.chat('Autonomous behavior enabled! I\'ll pursue goals independently.');
-  }
-  if (msg === `${cmd} auto off` || msg === `${cmd} autonomous off`) {
-    AUTONOMOUS_CONFIG.enabled = false;
-    stopAutonomousBehavior();
-    bot.chat('Autonomous behavior disabled. Waiting for commands.');
-  }
+  // No trust/owner/admin commands. Full autonomy: no privileged roles.
   if (msg.startsWith(`${cmd} set goal `)) {
     const goalName = msg.replace(`${cmd} set goal `, '').trim().replace(/ /g, '_');
     setAutonomousGoal(goalName);
@@ -3898,13 +3754,14 @@ bot.on('chat', (username, message) => {
   }
   
   if (msg === `${cmd} clear queue`) {
-    const trust = getTrustLevel(username);
-    if (trust === TRUST_LEVELS.OWNER || trust === TRUST_LEVELS.FRIEND) {
-      const count = requestQueue.length;
-      requestQueue = [];
-      bot.chat(`Cleared ${count} queued requests.`);
+    // Anyone can clear their own requests from the queue
+    const before = requestQueue.length;
+    requestQueue = requestQueue.filter(q => q.requester !== username);
+    const removed = before - requestQueue.length;
+    if (removed > 0) {
+      bot.chat(`Cleared ${removed} of your queued request(s).`);
     } else {
-      bot.chat("Only my owner or friends can clear my queue.");
+      bot.chat("You don't have any requests in my queue.");
     }
   }
 
@@ -3944,30 +3801,6 @@ bot.on('chat', (username, message) => {
       executeCommand(next.request);
     } else {
       bot.chat("I don't have any pending requests from you.");
-    }
-    return;
-  }
-  
-  // Override/insist commands - for when requester understands the trade-off and wants to proceed anyway
-  if (msg === `${cmd} insist` || msg === `${cmd} urgent` || msg === `${cmd} do it` || msg === `${cmd} do it anyway`) {
-    const trust = getTrustLevel(username);
-    if (trust !== TRUST_LEVELS.OWNER && trust !== TRUST_LEVELS.FRIEND) {
-      bot.chat("Only my owner or friends can insist on overriding my current task.");
-      return;
-    }
-    
-    // Find their queued request
-    const theirRequest = requestQueue.find(q => q.requester === username);
-    if (theirRequest) {
-      requestQueue = requestQueue.filter(q => q.requester !== username);
-      const cost = calculateInterruptionCost();
-      bot.chat(`Understood. Abandoning ${cost.shortDesc} to help you.`);
-      currentAutonomousGoal = null;
-      currentGoal = null;
-      bot.pathfinder.setGoal(null);
-      executeCommand(theirRequest.request);
-    } else {
-      bot.chat("You don't have a pending request. Tell me what you need first!");
     }
     return;
   }

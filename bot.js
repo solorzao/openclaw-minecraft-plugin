@@ -1485,6 +1485,23 @@ function loadWorldMemory() {
         worldMemory.knownBots.forEach(name => knownBots.add(name));
         console.log(`📡 Loaded ${knownBots.size} known bots from memory.`);
       }
+      
+      // Initialize missing fields with defaults
+      if (!worldMemory.autonomousProgress) {
+        worldMemory.autonomousProgress = {
+          phase: 'survival',
+          currentGoal: 'thriving_survivor',
+          tasksCompleted: [],
+          lastAction: null,
+          lastActionTime: 0,
+          stats: {
+            blocksGathered: { wood: 0, stone: 0, coal: 0, iron: 0 },
+            toolsCrafted: [],
+            structuresBuilt: [],
+            areasExplored: []
+          }
+        };
+      }
     }
   } catch (err) {
     console.error('Failed to load world memory:', err);

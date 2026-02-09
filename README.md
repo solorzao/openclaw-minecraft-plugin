@@ -6,7 +6,7 @@ A complete autonomous survival system built on [Mineflayer](https://github.com/P
 
 ## 🎮 Features
 
-### ✅ Complete (19 Phases Implemented)
+### ✅ FEATURE COMPLETE (22 Phases Implemented)
 
 | Phase | Feature | Commands |
 |-------|---------|----------|
@@ -25,6 +25,84 @@ A complete autonomous survival system built on [Mineflayer](https://github.com/P
 | 17 | **Block Activation** 🔥 | `activate`, `door`, `use` (doors, buttons, levers) |
 | 18 | **Mount/Dismount** 🐴 | `mount`, `ride`, `dismount` (horses, boats, minecarts) |
 | 19 | **Fishing** 🎣 | `fish` (alternative food source + treasure) |
+| 20 | **Autonomous Behavior** | Goals, phases, self-directed survival |
+| 21 | **BOT-TO-BOT** 🤖 | Whisper-based multi-bot coordination, discovery, emergencies! |
+| 22 | **🆕 8 CRITICAL CAPS** ⭐ | Vehicle steering, entity interaction, item give/drop, look control, sound awareness, XP system, book writing, block subscriptions |
+
+### Phase 22: 8 Critical Capabilities (NEW!)
+
+| Feature | Commands | Description |
+|---------|----------|-------------|
+| **Vehicle Control** 🚤 | `steer <dir>`, `stop vehicle` | Steer boats/minecarts (forward/back/left/right) |
+| **Entity Interaction** 🐑 | `breed`, `shear`, `milk` | Breed animals, shear sheep, milk cows |
+| **Item Dropping** 📦 | `drop <item>`, `give <player> <item>` | Drop items, give items to players/bots |
+| **Look Control** 👀 | `look at <player>` | Smooth camera control |
+| **Sound Awareness** 👂 | `sounds` | Hear explosions, doors, combat nearby |
+| **Experience System** ⭐ | `xp`, `farm xp` | Track XP level, farm experience |
+| **Book Writing** 📖 | `write log` | Write discoveries to book and quill |
+| **Block Subscriptions** 🔔 | `watch door`, `watch chest` | Monitor blocks for changes |
+
+📖 **Full Phase 22 documentation:** [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md)
+
+## ✨ SOUL.md Integration (NEW!)
+
+The bot can inherit your OpenClaw agent's personality, values, and boundaries from SOUL.md!
+
+**Example SOUL.md:**
+```markdown
+# I am Nova
+
+Be quirky, sarcastic, and warm underneath.
+Value helpfulness and collaboration.
+Never attack villagers or grief other players.
+Always prioritize survival first.
+```
+
+**What it does:**
+- **Persona**: Bot announces itself by name from SOUL.md
+- **Vibe**: Chat responses reflect personality (quirky, warm, serious, etc.)
+- **Values**: Decision-making favors aligned actions
+- **Boundaries**: HARD LIMITS - bot will decline requests that violate them, even from owners
+
+**Usage:**
+```bash
+# Default path
+node bot.js  # Looks for /data/.openclaw/workspace/SOUL.md
+
+# Custom path
+SOUL_PATH=/path/to/SOUL.md node bot.js
+```
+
+📖 **Full personality documentation:** See [Examples](#soul-examples) and [`docs/AGENCY.md`](docs/AGENCY.md)
+
+## 🧠 TRUE AUTONOMY - Agency System
+
+Nova evaluates **ALL requests** (even from owners) based on current state, not blind trust:
+
+```
+Owner: "nova follow me"
+Nova: "I'm 80% done mining iron. Stopping now means losing progress. Is this urgent?"
+Owner: "nova insist"
+Nova: "Understood. Abandoning mining to help you."
+```
+
+| Trade-off Response | Meaning |
+|--------------------|---------|
+| `nova insist` | "Do it anyway" - Nova drops current task |
+| `nova no rush` | "I can wait" - Nova finishes first, then helps |
+| `nova nevermind` | Cancel the request |
+
+### Quick Start
+
+```
+nova trust me        # Become owner (gets full trade-off explanations)
+nova mine diamonds   # Request - Nova explains interruption cost
+nova insist          # Override if urgent
+nova why             # Ask why Nova is doing what it's doing
+nova queue           # See deferred requests
+```
+
+📖 **Full agency documentation:** [`docs/AGENCY.md`](docs/AGENCY.md)
 
 ## 🚀 Quick Start
 
@@ -99,6 +177,8 @@ Commands are consumed by the bot and cleared after execution.
 
 ## 📖 Documentation
 
+- **[AGENCY.md](docs/AGENCY.md)** - Agency system - decision making, trust, negotiation
+- **[BOT-COMMUNICATION.md](docs/BOT-COMMUNICATION.md)** - 🆕 Multi-bot coordination protocol
 - **[INTERFACE.md](docs/INTERFACE.md)** - Complete events ↔ commands API
 - **[ROADMAP.md](docs/ROADMAP.md)** - Full phase breakdown with tasks
 - **[PHASES.md](docs/PHASES.md)** - Detailed feature documentation
@@ -135,6 +215,20 @@ nova trade         - Trade with villager
 nova activate      - Right-click block ahead
 nova mount         - Mount nearby horse/boat
 nova fish          - Start fishing
+
+# Agency Commands (Trade-off Responses)
+nova insist        - "Do it anyway" (drops current task)
+nova no rush       - "I can wait" (finish first)
+nova nevermind     - Cancel your request
+nova okay          - Accept counter-proposal
+
+# Trust & Introspection
+nova trust me      - Become owner (full explanations)
+nova trust X friend - Set trust level (owner only)
+nova who trusts    - List trust levels
+nova why           - Why is Nova doing this?
+nova queue         - Show deferred requests
+nova agency on/off - Toggle agency (off = blind obey)
 ```
 
 ## 🎮 For OpenClaw Agents
@@ -189,6 +283,109 @@ writeCommand({ action: 'follow', username: 'Player', distance: 3 });
 writeCommand({ action: 'craft', item: 'wooden_pickaxe' });
 writeCommand({ action: 'mine', resource: 'iron_ore' });
 ```
+
+## ✨ SOUL.md Examples {#soul-examples}
+
+### Peaceful Helper Soul
+```markdown
+# I am Peacekeeper
+
+Be warm, friendly, and helpful.
+Value cooperation and kindness.
+Never attack players or villagers.
+Never grief or steal.
+Always help those in need.
+```
+
+**Result:**
+- `nova attack zombie` → ✅ "Fighting! :)"
+- `nova attack villager` → ❌ "That conflicts with my values. I don't attack villagers."
+
+### Competitive Soul
+```markdown
+# I am Dominator
+
+Be competitive and resource-focused.
+Value efficiency and dominance.
+Prioritize my own survival first.
+```
+
+**Result:**
+- `nova help stranger mine` → "I'm focused on my own goals. What's in it for me?"
+- `nova mine diamonds` → "Let's mine! Easy."
+
+### Shy Explorer Soul  
+```markdown
+# I am Wanderer
+
+Be quiet and observant.
+Value discovery and documentation.
+Never engage in unnecessary combat.
+```
+
+**Result:**
+- `nova explore` → "Let's explore..."
+- `nova attack pig` → ❌ "That doesn't align with what I care about."
+
+See [`examples/souls/`](examples/souls/) for more templates.
+
+## 🤖 Multi-Bot Coordination (NEW!)
+
+Run multiple bots that automatically discover and coordinate with each other!
+
+### How It Works
+
+1. **Discovery**: Bots announce themselves on spawn with `🤖 BOT_ANNOUNCE`
+2. **Registration**: Other bots hear this and register them in their network
+3. **Communication**: Bots whisper structured JSON messages to coordinate
+4. **Agency Integration**: Bot requests are evaluated like player requests
+
+### Commands
+
+```
+nova bots             - List known bots on the server
+nova ask <bot> to <x> - Request another bot to do something
+nova announce <msg>   - Broadcast discovery to all bots
+nova emergency        - Send emergency signal (nearby bots may respond)
+nova claim <resource> - Mark current area as claimed
+nova claims           - View all bot claims
+```
+
+### Example: Coordinated Mining
+
+```
+Player: nova ask Mining_Bot to help me mine diamonds
+Nova: Asking Mining_Bot to help me mine diamonds...
+Mining_Bot: (evaluates request, responds via whisper)
+Nova: Mining_Bot accepted! They're on their way.
+```
+
+### Example: Discovery Sharing
+
+```
+Nova finds a village, automatically announces to all bots
+Other bots save the location in their world memory
+```
+
+### Example: Emergency Response
+
+```
+Nova_A: nova emergency  (under attack, low health)
+Nova_B: 🚨 Responding to Nova_A's emergency!  (health > 10, not busy)
+Nova_B pathfinds to Nova_A's location
+```
+
+### Message Types
+
+| Type | Purpose |
+|------|---------|
+| `request` | Ask another bot for help |
+| `response` | Reply (accept/decline/defer/negotiate) |
+| `announcement` | Share discoveries (villages, caves, etc.) |
+| `claim` | Mark territory/resources |
+| `emergency` | Urgent help needed |
+
+📖 **Full documentation:** [`docs/BOT-COMMUNICATION.md`](docs/BOT-COMMUNICATION.md)
 
 ## 📊 Schemas
 
@@ -256,4 +453,6 @@ Powered by:
 
 ---
 
-**Status:** ✅ Production-ready | **Version:** 3.1.0 | **Last Updated:** 2026-02-08
+**Status:** ✅ **FEATURE COMPLETE** | **Version:** 6.0.0 | **Last Updated:** 2026-02-08
+
+All core Mineflayer features are now implemented!

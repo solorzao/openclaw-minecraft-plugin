@@ -9,9 +9,437 @@ const EVENTS_FILE = '/data/minecraft-bot/events.json';
 const COMMANDS_FILE = '/data/minecraft-bot/commands.json';
 const WORLD_MEMORY_FILE = '/data/minecraft-bot/world-memory.json';
 
+// ==========================================
+// SOUL.md INTEGRATION - Personality & Values
+// ==========================================
+
+const SOUL_FILE = process.env.SOUL_PATH || '/data/.openclaw/workspace/SOUL.md';
+
+let soul = {
+  persona: null,
+  vibe: 'neutral',
+  values: [],
+  boundaries: [],
+  rawContent: null
+};
+
+function loadSoul() {
+  try {
+    if (!fs.existsSync(SOUL_FILE)) {
+      console.log('No SOUL.md found at', SOUL_FILE, '. Using default personality.');
+      return false;
+    }
+    
+    const content = fs.readFileSync(SOUL_FILE, 'utf8');
+    soul = parseSoul(content);
+    soul.rawContent = content;
+    console.log(`✨ Soul loaded: ${soul.persona || 'Anonymous'}`);
+    
+    if (soul.boundaries.length > 0) {
+      console.log(`🛡️  Boundaries: ${soul.boundaries.join(', ')}`);
+    }
+    if (soul.values.length > 0) {
+      console.log(`💎 Values: ${soul.values.join(', ')}`);
+    }
+    
+    return true;
+  } catch (err) {
+    console.error('Failed to load SOUL.md:', err.message);
+    return false;
+  }
+}
+
+function parseSoul(content) {
+  // Extract key sections from markdown:
+  // - Name/identity
+  // - Vibe/personality traits
+  // - Values (what matters)
+  // - Boundaries (hard limits)
+  
+  const parsed = {
+    persona: null,
+    vibe: 'neutral',
+    values: [],
+    boundaries: []
+  };
+  
+  // Look for common patterns:
+  // "I am [name]" / "You are [name]" / "# [name]" (heading)
+  const nameMatch = content.match(/(?:^#\s*(?:I am\s+)?|I am|You are|Name:)\s*([^\n\.#]+)/im);
+  if (nameMatch) parsed.persona = nameMatch[1].trim();
+  
+  // Extract "Be X" patterns for vibe
+  const bePatterns = content.match(/Be\s+([^\n\.]+)/gi);
+  if (bePatterns) {
+    parsed.vibe = bePatterns.map(p => p.replace(/Be\s+/i, '').trim()).join(', ');
+  }
+  
+  // Extract "Never X" / "Don't X" patterns for boundaries
+  const neverPatterns = content.match(/(?:Never|Don't|Do not)\s+([^\n\.]+)/gi);
+  if (neverPatterns) {
+    parsed.boundaries = neverPatterns.map(p => 
+      p.replace(/(?:Never|Don't|Do not)\s+/i, '').trim().toLowerCase()
+    );
+  }
+  
+  // Extract "Value X" / "Care about X" / "Respect X"
+  const valuePatterns = content.match(/(?:Value|Care about|Respect|Prioritize|Always)\s+([^\n\.]+)/gi);
+  if (valuePatterns) {
+    parsed.values = valuePatterns.map(p =>
+      p.replace(/(?:Value|Care about|Respect|Prioritize|Always)\s+/i, '').trim().toLowerCase()
+    );
+  }
+  
+  return parsed;
+}
+
+/**
+ * Check if a request violates a soul boundary
+ */
+function requestViolatesBoundary(request, boundary) {
+  const action = request.action || '';
+  const target = (request.target || '').toLowerCase();
+  const originalMsg = (request.originalMessage || '').toLowerCase();
+  
+  // Attack boundaries
+  if (boundary.includes('attack') && action === 'attack') {
+    if (boundary.includes('villager') && (target.includes('villager') || originalMsg.includes('villager'))) {
+      return true;
+    }
+    if (boundary.includes('player') && isPlayerTarget(target)) {
+      return true;
+    }
+    if (boundary.includes('peaceful') || boundary.includes('passive')) {
+      const passiveMobs = ['cow', 'pig', 'sheep', 'chicken', 'rabbit', 'horse', 'donkey', 'llama', 'villager', 'cat', 'dog', 'wolf'];
+      if (passiveMobs.some(mob => target.includes(mob) || originalMsg.includes(mob))) {
+        return true;
+      }
+    }
+  }
+  
+  // Griefing boundaries
+  if ((boundary.includes('grief') || boundary.includes('destroy') || boundary.includes('steal')) && isGriefingAction(request)) {
+    return true;
+  }
+  
+  // PvP boundaries
+  if (boundary.includes('pvp') && action === 'attack' && isPlayerTarget(target)) {
+    return true;
+  }
+  
+  // Generic harmful action boundaries
+  if (boundary.includes('harm') && action === 'attack') {
+    return true;
+  }
+  
+  return false;
+}
+
+/**
+ * Check if target is likely a player
+ */
+function isPlayerTarget(target) {
+  // Check if target matches a known player name
+  if (bot && bot.players && bot.players[target]) {
+    return true;
+  }
+  // Check for player-like patterns (avoid mob names)
+  const mobNames = ['zombie', 'skeleton', 'creeper', 'spider', 'enderman', 'witch', 'cow', 'pig', 'sheep', 'chicken', 'villager'];
+  return target && !mobNames.some(mob => target.toLowerCase().includes(mob));
+}
+
+/**
+ * Check if action appears to be griefing
+ */
+function isGriefingAction(request) {
+  const action = request.action || '';
+  const target = (request.target || '').toLowerCase();
+  
+  // Destroying others' builds
+  if (action === 'dig' || action === 'break') {
+    // If near a village or claimed area, this might be griefing
+    // For now, we'll be conservative
+    return false;
+  }
+  
+  // Stealing from chests that aren't ours
+  if (action === 'retrieve' && request.chestOwner && request.chestOwner !== 'self') {
+    return true;
+  }
+  
+  return false;
+}
+
+/**
+ * Check if action is helpful to others
+ */
+function isHelpingAction(request) {
+  const action = request.action || '';
+  return ['follow', 'give', 'heal', 'defend', 'share'].includes(action);
+}
+
+/**
+ * Check if action involves building
+ */
+function isBuildingAction(request) {
+  const action = request.action || '';
+  return ['build', 'place', 'construct'].includes(action);
+}
+
+/**
+ * Check value alignment for a request
+ * Returns: 'strong_match' | 'match' | 'neutral' | 'conflict' | 'strong_conflict'
+ */
+function checkValueAlignment(request, values) {
+  let score = 0;
+  const action = request.action || '';
+  const goal = request.goal || '';
+  
+  for (const value of values) {
+    // Peaceful values
+    if ((value.includes('peaceful') || value.includes('peace')) && action === 'attack') {
+      score -= 2;
+    }
+    
+    // Helpfulness values
+    if ((value.includes('helpful') || value.includes('help')) && isHelpingAction(request)) {
+      score += 2;
+    }
+    
+    // Builder values
+    if ((value.includes('build') || value.includes('create') || value.includes('construct')) && isBuildingAction(request)) {
+      score += 2;
+    }
+    
+    // Explorer values
+    if ((value.includes('explor') || value.includes('discover')) && (goal === 'explore' || action === 'explore')) {
+      score += 1;
+    }
+    
+    // Survival values
+    if ((value.includes('surviv') || value.includes('safety')) && 
+        ['eat', 'flee', 'retreat', 'sleep', 'heal'].includes(action)) {
+      score += 1;
+    }
+    
+    // Collaboration values
+    if ((value.includes('collaborat') || value.includes('cooperat') || value.includes('together')) && 
+        ['follow', 'help', 'share', 'trade'].includes(action)) {
+      score += 2;
+    }
+    
+    // Independence/competitive values
+    if ((value.includes('independen') || value.includes('competitiv') || value.includes('dominan'))) {
+      if (isHelpingAction(request) && request.forOthers) {
+        score -= 1; // Less inclined to help strangers
+      }
+    }
+    
+    // Resource-focused values
+    if ((value.includes('resource') || value.includes('efficienc')) && 
+        ['mine_resource', 'gather', 'collect'].includes(action)) {
+      score += 1;
+    }
+  }
+  
+  if (score <= -3) return 'strong_conflict';
+  if (score <= -1) return 'conflict';
+  if (score >= 3) return 'strong_match';
+  if (score >= 1) return 'match';
+  return 'neutral';
+}
+
+/**
+ * Add personality flair to chat messages based on soul.vibe
+ */
+function styleMessage(message) {
+  if (!soul.vibe || soul.vibe === 'neutral') {
+    return message;
+  }
+  
+  const vibe = soul.vibe.toLowerCase();
+  
+  if (vibe.includes('quirky') || vibe.includes('sarcastic') || vibe.includes('playful')) {
+    return addQuirkyFlair(message);
+  } else if (vibe.includes('warm') || vibe.includes('friendly') || vibe.includes('kind')) {
+    return addWarmFlair(message);
+  } else if (vibe.includes('serious') || vibe.includes('professional') || vibe.includes('formal')) {
+    return addSeriousFlair(message);
+  } else if (vibe.includes('competitive') || vibe.includes('aggressive') || vibe.includes('dominant')) {
+    return addCompetitiveFlair(message);
+  } else if (vibe.includes('shy') || vibe.includes('quiet') || vibe.includes('reserved')) {
+    return addShyFlair(message);
+  }
+  
+  return message;
+}
+
+function addQuirkyFlair(msg) {
+  const quirks = ['!', '~', ' :)', ' >', ' heh', '!!'];
+  return msg + quirks[Math.floor(Math.random() * quirks.length)];
+}
+
+function addWarmFlair(msg) {
+  const warm = [' :)', ' <3', '!', ' friend!'];
+  // Add warm prefix sometimes
+  if (Math.random() > 0.7) {
+    const prefixes = ['Hey! ', 'Oh! ', ''];
+    msg = prefixes[Math.floor(Math.random() * prefixes.length)] + msg;
+  }
+  return msg + warm[Math.floor(Math.random() * warm.length)];
+}
+
+function addSeriousFlair(msg) {
+  // Remove casual language, keep it professional
+  return msg.replace(/!/g, '.').replace(/ :[\)\(]/g, '');
+}
+
+function addCompetitiveFlair(msg) {
+  const competitive = ['!', '. Easy.', '. Watch and learn.', '!'];
+  return msg + competitive[Math.floor(Math.random() * competitive.length)];
+}
+
+function addShyFlair(msg) {
+  const shy = ['...', '.', '..'];
+  // Soften language
+  msg = msg.replace(/!/g, '.');
+  return msg + shy[Math.floor(Math.random() * shy.length)];
+}
+
 let events = [];
 let movements;
 let currentGoal = null;
+
+// ==========================================
+// PHASE 22: 8 CRITICAL CAPABILITIES
+// ==========================================
+
+// Feature 1: Vehicle Control 🚤
+let vehicleControlActive = false;
+
+function startVehicleControl(direction) {
+  if (!bot.vehicle) {
+    logEvent('vehicle_control_failed', { reason: 'not_mounted' });
+    return false;
+  }
+  
+  vehicleControlActive = true;
+  
+  // direction: 'forward' | 'backward' | 'left' | 'right' | 'stop'
+  switch (direction) {
+    case 'forward':
+      bot.moveVehicle(0, 1);
+      break;
+    case 'backward':
+      bot.moveVehicle(0, -1);
+      break;
+    case 'left':
+      bot.moveVehicle(-1, 1);
+      break;
+    case 'right':
+      bot.moveVehicle(1, 1);
+      break;
+    case 'stop':
+      bot.moveVehicle(0, 0);
+      vehicleControlActive = false;
+      break;
+    default:
+      bot.moveVehicle(0, 1); // Default forward
+  }
+  
+  logEvent('vehicle_control', { direction, vehicle: bot.vehicle?.name || 'unknown' });
+  return true;
+}
+
+// Feature 5: Sound Awareness 👂
+const recentSounds = [];
+
+// Feature 6: Experience System ⭐
+function needsExperience() {
+  // For enchanting, need 30 levels minimum
+  const phase = worldMemory?.autonomousProgress?.currentGoal || '';
+  if (phase === 'wealthy_trader' || hasItem('enchanting_table')) {
+    return bot.experience.level < 30;
+  }
+  return false;
+}
+
+// Feature 8: Block Update Subscriptions 🔔
+const watchedBlocks = new Map(); // position key -> { callback, listeners }
+
+function watchBlock(position, callback) {
+  const key = `${position.x},${position.y},${position.z}`;
+  
+  // Store the callback
+  watchedBlocks.set(key, { callback, position });
+  
+  // Subscribe to specific block updates (Mineflayer world event)
+  const eventName = `blockUpdate:(${position.x}, ${position.y}, ${position.z})`;
+  
+  const handler = (oldBlock, newBlock) => {
+    callback(oldBlock, newBlock);
+  };
+  
+  bot.world.on(eventName, handler);
+  
+  // Store handler reference for cleanup
+  watchedBlocks.get(key).handler = handler;
+  watchedBlocks.get(key).eventName = eventName;
+  
+  logEvent('block_watch_started', { position });
+  return true;
+}
+
+function unwatchBlock(position) {
+  const key = `${position.x},${position.y},${position.z}`;
+  const watched = watchedBlocks.get(key);
+  
+  if (watched && watched.handler) {
+    bot.world.removeListener(watched.eventName, watched.handler);
+  }
+  
+  watchedBlocks.delete(key);
+  logEvent('block_watch_stopped', { position });
+}
+
+// Feature 7: Book Writing 📖
+async function writeDiscoveryLog() {
+  const book = bot.inventory.items().find(i => i.name === 'writable_book');
+  if (!book) {
+    bot.chat("I don't have a writable book!");
+    return false;
+  }
+  
+  const pages = [];
+  let currentPage = 'Discovery Log\n\n';
+  
+  for (const [name, landmark] of Object.entries(worldMemory.landmarks || {})) {
+    const entry = `${name}: (${landmark.x}, ${landmark.y}, ${landmark.z})\n`;
+    if (currentPage.length + entry.length > 255) {
+      pages.push(currentPage);
+      currentPage = entry;
+    } else {
+      currentPage += entry;
+    }
+  }
+  
+  if (currentPage) pages.push(currentPage);
+  
+  if (pages.length === 0) {
+    pages.push('Discovery Log\n\nNo landmarks discovered yet.');
+  }
+  
+  try {
+    await bot.writeBook(book.slot, pages);
+    logEvent('book_written', { slot: book.slot, pageCount: pages.length });
+    bot.chat('Discovery log updated!');
+    return true;
+  } catch (err) {
+    logEvent('write_book_failed', { reason: err.message });
+    bot.chat(`Failed to write book: ${err.message}`);
+    return false;
+  }
+}
 
 // Phase 14: World Memory - persistent location storage
 let worldMemory = {
@@ -46,17 +474,21 @@ const AUTONOMOUS_CONFIG = {
   announceActions: true,
   helpNearbyPlayers: true,
   helpRadius: 20,
-  // Agency configuration
+  // Agency configuration - TRUE AUTONOMY
   agency: {
     enabled: true,            // Enable request evaluation (vs blind obedience)
-    ownerPriority: true,      // Owners get higher priority but not absolute control
+    explainTradeOffs: true,   // Always explain costs of interruption
     allowDecline: true,       // Can decline conflicting requests
-    allowNegotiation: true,   // Can make counter-proposals
+    allowNegotiation: true,   // Can present trade-offs and negotiate
     allowDefer: true,         // Can queue requests for later
     maxQueueSize: 10,         // Max deferred requests to remember
     queueExpiryMs: 300000,    // Deferred requests expire after 5 min
     announceDecisions: true,  // Chat about decisions made
-    almostDoneThreshold: 0.8  // Consider "almost done" if >80% progress
+    highCostThreshold: 0.8,   // Progress % considered "almost done" / high cost
+    // Trust affects TRANSPARENCY, not auto-acceptance:
+    // - Owner/Friend: Full trade-off explanation, can override with "insist"
+    // - Neutral: Brief explanation, deferred
+    // - Hostile: Declined
   }
 };
 
@@ -129,6 +561,135 @@ const TRUST_LEVELS = {
 let knownEntities = {
   // username: { trust: TRUST_LEVELS.X, lastInteraction: timestamp }
 };
+
+// ==========================================
+// PHASE 21: BOT-TO-BOT COMMUNICATION
+// ==========================================
+
+// Track known bots on the server
+const knownBots = new Set();
+
+// Bot-to-bot message protocol types
+const MessageType = {
+  REQUEST: 'request',
+  RESPONSE: 'response',
+  NEGOTIATION: 'negotiation',
+  ANNOUNCEMENT: 'announcement',
+  CLAIM: 'claim',
+  EMERGENCY: 'emergency',
+  ACKNOWLEDGMENT: 'ack'
+};
+
+function registerBot(username) {
+  if (!knownBots.has(username)) {
+    knownBots.add(username);
+    console.log(`🤖 Discovered bot: ${username}`);
+    // Auto-set trust level for bots
+    if (!knownEntities[username]) {
+      knownEntities[username] = { trust: TRUST_LEVELS.BOT, lastInteraction: Date.now() };
+    }
+    saveWorldMemory();
+  }
+}
+
+function isKnownBot(username) {
+  return knownBots.has(username);
+}
+
+/**
+ * Send a structured message to another bot via whisper
+ */
+function sendMessageToBot(targetBot, type, content) {
+  const message = JSON.stringify({
+    type,
+    from: bot.username,
+    timestamp: Date.now(),
+    content
+  });
+  
+  try {
+    bot.whisper(targetBot, message);
+    logEvent('bot_message_sent', {
+      to: targetBot,
+      type,
+      content
+    });
+  } catch (err) {
+    console.error(`Failed to whisper to ${targetBot}:`, err.message);
+    logEvent('bot_message_failed', { to: targetBot, error: err.message });
+  }
+}
+
+/**
+ * Broadcast a message to all known bots
+ */
+function broadcastToAllBots(type, content) {
+  knownBots.forEach(targetBot => {
+    if (targetBot !== bot.username) {
+      sendMessageToBot(targetBot, type, content);
+    }
+  });
+}
+
+// Bot communication helper functions
+
+/**
+ * Request help from a specific bot
+ */
+function requestHelpFromBot(targetBot, action, params) {
+  sendMessageToBot(targetBot, MessageType.REQUEST, {
+    requestId: Date.now(),
+    action,
+    params
+  });
+}
+
+/**
+ * Request help from any available bot
+ */
+function requestHelpFromAnyBot(action, params) {
+  broadcastToAllBots(MessageType.REQUEST, {
+    requestId: Date.now(),
+    action,
+    params
+  });
+}
+
+/**
+ * Announce a discovery to all bots
+ */
+function announceDiscovery(type, location, details) {
+  broadcastToAllBots(MessageType.ANNOUNCEMENT, {
+    type,
+    location,
+    message: details
+  });
+}
+
+/**
+ * Claim an area or resource (tell other bots to avoid)
+ */
+function claimResource(resource, location) {
+  broadcastToAllBots(MessageType.CLAIM, {
+    resource,
+    location,
+    timestamp: Date.now()
+  });
+}
+
+/**
+ * Send an emergency signal to all bots
+ */
+function sendEmergency(reason, location) {
+  broadcastToAllBots(MessageType.EMERGENCY, {
+    reason,
+    location: location || (bot.entity ? {
+      x: Math.floor(bot.entity.position.x),
+      y: Math.floor(bot.entity.position.y),
+      z: Math.floor(bot.entity.position.z)
+    } : null)
+  });
+}
 
 let autonomousInterval = null;
 let lastAutonomousAction = null;
@@ -335,6 +896,116 @@ function determineSource(cmd, username) {
   };
 }
 
+/**
+ * Calculate the cost of interrupting current activity
+ * Returns: { hasCost: bool, severity: 'none'|'low'|'medium'|'high', details: {...} }
+ */
+function calculateInterruptionCost() {
+  if (!currentGoal && !currentAutonomousGoal) {
+    return { hasCost: false, severity: 'none', shortDesc: 'idle', details: {} };
+  }
+  
+  const goal = currentAutonomousGoal || currentGoal;
+  const action = goal.action || goal.goal || goal.type;
+  const startTime = worldMemory.autonomousProgress.lastActionTime || Date.now();
+  const elapsed = Date.now() - startTime;
+  const phase = worldMemory.autonomousProgress.phase;
+  
+  // Estimate progress
+  let progress = 0;
+  let estimatedRemaining = 'unknown';
+  let lossDescription = '';
+  
+  if (action === 'mine_resource' && goal.count) {
+    const resource = goal.resource || 'ore';
+    const current = countInventoryItem(resource);
+    const target = goal.count;
+    progress = Math.min(current / target, 0.99);
+    const remaining = target - current;
+    estimatedRemaining = `~${remaining * 5}s`;
+    lossDescription = `${Math.floor(progress * 100)}% done mining ${resource}`;
+  } else if (action === 'build') {
+    // Building progress is time-based estimate
+    progress = Math.min(elapsed / 30000, 0.95); // Assume ~30s for build
+    lossDescription = `${Math.floor(progress * 100)}% done building`;
+  } else if (action === 'gather_wood' || action === 'goal') {
+    const wood = countInventoryItem('log');
+    progress = Math.min(wood / 16, 0.95);
+    lossDescription = `gathering wood (${wood} logs)`;
+  } else if (action === 'craft') {
+    // Crafting is quick
+    progress = elapsed > 2000 ? 0.9 : 0.5;
+    lossDescription = 'mid-craft';
+  } else if (action === 'follow') {
+    // Following has no real progress loss
+    return { hasCost: false, severity: 'none', shortDesc: 'following someone', details: {} };
+  } else {
+    // Generic time-based estimate
+    progress = Math.min(elapsed / 20000, 0.8);
+    lossDescription = `working on ${action}`;
+  }
+  
+  // Calculate severity
+  let severity = 'none';
+  if (progress > 0.8) severity = 'high';  // Almost done, big loss
+  else if (progress > 0.5) severity = 'medium';
+  else if (progress > 0.2) severity = 'low';
+  
+  // Special cases that are always costly
+  if (bot.health < 8) {
+    severity = 'high';
+    lossDescription = `at ${Math.floor(bot.health)} HP`;
+  }
+  
+  return {
+    hasCost: severity !== 'none',
+    severity,
+    shortDesc: lossDescription,
+    details: {
+      action,
+      progress: Math.floor(progress * 100),
+      elapsed,
+      estimatedRemaining,
+      phase
+    }
+  };
+}
+
+/**
+ * Generate a human-readable trade-off explanation
+ */
+function generateTradeOffExplanation(request, cost) {
+  const requestAction = request.action;
+  const details = cost.details;
+  
+  if (!cost.hasCost) {
+    return { message: "Sure!", hasTradeOff: false };
+  }
+  
+  // Build contextual trade-off message
+  let message = '';
+  
+  if (cost.severity === 'high') {
+    // High cost - really make them think about it
+    if (details.progress >= 80) {
+      message = `I'm ${details.progress}% done ${cost.shortDesc}. Stopping now means losing that progress. Is this urgent?`;
+    } else if (bot.health < 8) {
+      message = `I'm at ${Math.floor(bot.health)} HP and need to heal. Following you now could get me killed. Give me 30 seconds?`;
+    } else {
+      message = `I just started ${cost.shortDesc}. That will take a few minutes. Can this wait, or is it urgent?`;
+    }
+  } else if (cost.severity === 'medium') {
+    // Medium cost - explain but less dramatic
+    message = `I'm ${cost.shortDesc} (${details.progress}% done). Want me to pause this?`;
+  } else {
+    // Low cost - quick mention
+    message = `I was ${cost.shortDesc}. Switching to your request.`;
+    return { message, hasTradeOff: false };  // Low enough to just accept
+  }
+  
+  return { message, hasTradeOff: true, cost };
+}
+
 function getCounterProposal(request, reason) {
   const action = request.action;
   const phase = worldMemory.autonomousProgress.phase;
@@ -395,8 +1066,50 @@ function evaluateRequest(request, requester) {
     currentGoal: currentGoal?.action,
     phase,
     aligns,
-    canHelp: canHelp.can
+    canHelp: canHelp.can,
+    hasSoul: soul.persona !== null
   });
+  
+  // === SOUL BOUNDARY CHECK (highest priority after critical) ===
+  // Soul boundaries are HARD LIMITS - even owners can't override
+  if (soul.boundaries.length > 0) {
+    for (const boundary of soul.boundaries) {
+      if (requestViolatesBoundary(request, boundary)) {
+        const response = styleMessage(`That conflicts with my values. I don't ${boundary}.`);
+        logEvent('soul_boundary_violation', {
+          request: request.action,
+          boundary,
+          requester
+        });
+        return {
+          type: DECISION.DECLINE,
+          reason: 'soul_boundary_violation',
+          response
+        };
+      }
+    }
+  }
+  
+  // === SOUL VALUE ALIGNMENT CHECK ===
+  // Strong conflicts are declined; mild conflicts affect enthusiasm
+  if (soul.values.length > 0) {
+    const alignment = checkValueAlignment(request, soul.values);
+    if (alignment === 'strong_conflict') {
+      const response = styleMessage(`That doesn't align with what I care about.`);
+      logEvent('soul_value_conflict', {
+        request: request.action,
+        alignment,
+        requester
+      });
+      return {
+        type: DECISION.DECLINE,
+        reason: 'soul_value_conflict',
+        response
+      };
+    }
+    // Store alignment for later use in responses
+    request._valueAlignment = alignment;
+  }
   
   // === ALWAYS ACCEPT ===
   
@@ -405,7 +1118,7 @@ function evaluateRequest(request, requester) {
     return {
       type: DECISION.ACCEPT,
       reason: 'critical_urgency',
-      response: "On my way!"
+      response: styleMessage("On my way!")
     };
   }
   
@@ -418,110 +1131,117 @@ function evaluateRequest(request, requester) {
     };
   }
   
-  // === OWNER REQUESTS ===
+  // === ALL REQUESTS (including owner) - Evaluate based on state, not trust ===
+  // Owner gets transparency and final say, but NOT auto-compliance
   
-  if (trust === TRUST_LEVELS.OWNER && AUTONOMOUS_CONFIG.agency.ownerPriority) {
-    // Owners get high consideration but we still reason about it
-    
-    // If request aligns with our goals, enthusiastic accept
-    if (aligns) {
-      return {
-        type: DECISION.ACCEPT,
-        reason: 'owner_aligned_request',
-        response: getEnthusiasticResponse(request.action)
-      };
-    }
-    
-    // If we can't currently help, explain why
-    if (!canHelp.can) {
-      return {
-        type: DECISION.DEFER,
-        reason: 'owner_request_but_unable',
-        response: `${canHelp.reason} - give me a moment.`,
-        deferredAction: request
-      };
-    }
-    
-    // Check for conflicts
-    const conflict = doesConflictWithGoal(request);
-    if (conflict.conflicts && AUTONOMOUS_CONFIG.agency.allowDecline) {
-      // Even for owners, explain conflicts
-      return {
-        type: DECISION.DEFER,
-        reason: 'owner_conflict',
-        response: `${conflict.reason}. I'll do that right after!`,
-        deferredAction: request
-      };
-    }
-    
-    // If almost done with current task, defer briefly
-    if (currentGoal && isCurrentGoalAlmostDone() && AUTONOMOUS_CONFIG.agency.allowDefer) {
-      const currentDesc = currentGoal.action || currentGoal.goal || 'this';
-      return {
-        type: DECISION.DEFER,
-        reason: 'owner_almost_done',
-        response: `I'm almost done with ${currentDesc}. Give me just a moment!`,
-        deferredAction: request
-      };
-    }
-    
-    // Owner request doesn't align but we can do it - accept with note
+  // Calculate the cost of interruption
+  const interruptionCost = calculateInterruptionCost();
+  const tradeOff = generateTradeOffExplanation(request, interruptionCost);
+  
+  // If not busy at all, accept anyone's reasonable request
+  if (!currentGoal && canHelp.can && !interruptionCost.hasCost) {
+    const enthusiasm = trust === TRUST_LEVELS.OWNER ? getEnthusiasticResponse(request.action) : "Sure, I can help.";
     return {
       type: DECISION.ACCEPT,
-      reason: 'owner_request',
-      response: currentGoal ? `Sure! (pausing ${phase} for now)` : "Sure!"
+      reason: 'idle_can_help',
+      response: enthusiasm
     };
   }
   
-  // === FRIEND REQUESTS ===
-  
-  if (trust === TRUST_LEVELS.FRIEND) {
-    if (aligns && canHelp.can) {
-      return {
-        type: DECISION.ACCEPT,
-        reason: 'friend_aligned_request',
-        response: "Happy to help!"
-      };
-    }
-    
-    if (!canHelp.can) {
-      const counter = getCounterProposal(request, canHelp.reason);
-      return {
-        type: DECISION.NEGOTIATE,
-        reason: 'friend_request_negotiate',
-        response: counter.message,
-        counterAction: counter.alternativeAction
-      };
-    }
-    
-    // Friend request, can help but doesn't align - defer
+  // If request perfectly aligns with what we're already doing
+  if (aligns && canHelp.can && !interruptionCost.hasCost) {
     return {
-      type: DECISION.DEFER,
-      reason: 'friend_request_busy',
-      response: `I'll help after I finish ${phase}. Should be quick!`,
+      type: DECISION.ACCEPT,
+      reason: 'aligned_no_cost',
+      response: "That fits with what I'm doing!"
+    };
+  }
+  
+  // === SURVIVAL CRITICAL - explain but might need to prioritize self ===
+  if (!canHelp.can) {
+    // Life or death for the bot - explain the situation
+    const survivalMsg = trust === TRUST_LEVELS.OWNER 
+      ? `${canHelp.reason}. Give me 30 seconds to stabilize?`
+      : `${canHelp.reason}. I need a moment.`;
+    return {
+      type: DECISION.NEGOTIATE,
+      reason: 'survival_priority',
+      response: survivalMsg,
+      counterAction: { action: 'eat' },  // Prioritize survival
       deferredAction: request
     };
   }
   
-  // === BOT REQUESTS ===
+  // === ACTIVE GOAL - Present trade-offs ===
+  if (currentGoal && interruptionCost.hasCost) {
+    // For owners: full transparency with trade-off
+    if (trust === TRUST_LEVELS.OWNER) {
+      return {
+        type: DECISION.NEGOTIATE,
+        reason: 'presenting_tradeoff_to_owner',
+        response: tradeOff.message,
+        askingConfirmation: true,  // Owner can say "nova yes" to override
+        deferredAction: request
+      };
+    }
+    
+    // For friends: similar transparency
+    if (trust === TRUST_LEVELS.FRIEND) {
+      return {
+        type: DECISION.NEGOTIATE,
+        reason: 'presenting_tradeoff_to_friend',
+        response: tradeOff.message,
+        askingConfirmation: true,
+        deferredAction: request
+      };
+    }
+    
+    // For neutrals: defer without as much detail
+    return {
+      type: DECISION.DEFER,
+      reason: 'busy_with_goal',
+      response: `I'm ${interruptionCost.shortDesc}. I can help after!`,
+      deferredAction: request
+    };
+  }
   
+  // === CONFLICT DETECTION ===
+  const conflict = doesConflictWithGoal(request);
+  if (conflict.conflicts) {
+    // Explain the conflict to everyone
+    const conflictMsg = trust === TRUST_LEVELS.OWNER
+      ? `${conflict.reason}. Want me to abandon my current approach?`
+      : conflict.reason;
+    return {
+      type: DECISION.NEGOTIATE,
+      reason: 'goal_conflict',
+      response: conflictMsg,
+      askingConfirmation: trust === TRUST_LEVELS.OWNER,
+      deferredAction: request
+    };
+  }
+  
+  // === BOT-TO-BOT REQUESTS ===
+  // Bots always negotiate - they understand trade-offs
   if (trust === TRUST_LEVELS.BOT) {
-    // Bots negotiate with each other
-    if (aligns && canHelp.can) {
+    if (aligns && canHelp.can && !interruptionCost.hasCost) {
       return {
         type: DECISION.ACCEPT,
-        reason: 'bot_mutual_benefit',
+        reason: 'bot_aligned_idle',
         response: "Coordinating with you."
       };
     }
     
-    // Negotiate for mutual benefit
+    // Full negotiation mode
     const counter = getCounterProposal(request, 'bot_negotiation');
     return {
       type: DECISION.NEGOTIATE,
       reason: 'bot_negotiation',
-      response: counter.message,
-      counterAction: counter.alternativeAction
+      response: interruptionCost.hasCost 
+        ? `I'm ${interruptionCost.shortDesc}. ${counter.message}`
+        : counter.message,
+      counterAction: counter.alternativeAction,
+      deferredAction: request
     };
   }
   
@@ -620,7 +1340,8 @@ function getEnthusiasticResponse(action) {
   };
   
   const opts = responses[action] || responses.default;
-  return opts[Math.floor(Math.random() * opts.length)];
+  const base = opts[Math.floor(Math.random() * opts.length)];
+  return styleMessage(base);
 }
 
 /**
@@ -663,12 +1384,8 @@ async function processExternalRequest(request, requester) {
       
     case DECISION.DEFER:
       // Queue the request for later
-      if (decision.deferredAction) {
-        requestQueue.push({
-          request: decision.deferredAction,
-          requester,
-          queuedAt: Date.now()
-        });
+      if (decision.deferredAction && AUTONOMOUS_CONFIG.agency.allowDefer) {
+        queueRequest(decision.deferredAction, requester);
         logEvent('request_queued', { 
           action: decision.deferredAction.action, 
           requester,
@@ -697,17 +1414,25 @@ async function processExternalRequest(request, requester) {
 async function processRequestQueue() {
   if (requestQueue.length === 0) return;
   if (currentAutonomousGoal) return; // Still busy
+  if (isPlayerCommandActive()) return; // Player command in progress
+  
+  // Clean up expired requests first
+  const expiryMs = AUTONOMOUS_CONFIG.agency.queueExpiryMs || 300000;
+  const now = Date.now();
+  const expiredCount = requestQueue.filter(q => (now - q.queuedAt) > expiryMs).length;
+  requestQueue = requestQueue.filter(q => (now - q.queuedAt) <= expiryMs);
+  
+  if (expiredCount > 0) {
+    logEvent('requests_expired', { count: expiredCount });
+  }
+  
+  if (requestQueue.length === 0) return;
   
   // Get oldest request
   const queued = requestQueue.shift();
   if (!queued) return;
   
-  // Check if request is still valid (not too old)
-  const age = Date.now() - queued.queuedAt;
-  if (age > 300000) { // 5 minutes max
-    logEvent('request_expired', { action: queued.request.action, age });
-    return;
-  }
+  const age = now - queued.queuedAt;
   
   logEvent('processing_queued_request', { 
     action: queued.request.action,
@@ -719,10 +1444,47 @@ async function processRequestQueue() {
   await processExternalRequest(queued.request, queued.requester);
 }
 
+/**
+ * Add a request to the queue (with size limits)
+ */
+function queueRequest(request, requester) {
+  const maxSize = AUTONOMOUS_CONFIG.agency.maxQueueSize || 10;
+  
+  // Enforce queue size limit
+  if (requestQueue.length >= maxSize) {
+    // Remove oldest
+    const dropped = requestQueue.shift();
+    logEvent('queue_overflow', { 
+      dropped: dropped.request.action, 
+      dropper: dropped.requester 
+    });
+  }
+  
+  requestQueue.push({
+    request,
+    requester,
+    queuedAt: Date.now()
+  });
+  
+  saveWorldMemory(); // Persist queue
+}
+
 function loadWorldMemory() {
   try {
     if (fs.existsSync(WORLD_MEMORY_FILE)) {
       worldMemory = JSON.parse(fs.readFileSync(WORLD_MEMORY_FILE, 'utf8'));
+      // Restore persisted state
+      if (worldMemory.knownEntities) {
+        knownEntities = worldMemory.knownEntities;
+      }
+      if (worldMemory.requestQueue) {
+        requestQueue = worldMemory.requestQueue;
+      }
+      // Phase 21: Restore known bots
+      if (worldMemory.knownBots) {
+        worldMemory.knownBots.forEach(name => knownBots.add(name));
+        console.log(`📡 Loaded ${knownBots.size} known bots from memory.`);
+      }
     }
   } catch (err) {
     console.error('Failed to load world memory:', err);
@@ -731,6 +1493,11 @@ function loadWorldMemory() {
 
 function saveWorldMemory() {
   try {
+    // Include current state in world memory before saving
+    worldMemory.knownEntities = knownEntities;
+    worldMemory.requestQueue = requestQueue;
+    // Phase 21: Save known bots
+    worldMemory.knownBots = Array.from(knownBots);
     fs.writeFileSync(WORLD_MEMORY_FILE, JSON.stringify(worldMemory, null, 2));
   } catch (err) {
     console.error('Failed to save world memory:', err);
@@ -782,25 +1549,62 @@ bot.on('spawn', () => {
     saveWorldMemory();
   }
 
-  bot.chat('Nova_AI v4 online! I have my own goals now. Say "nova trust me" to be my owner!');
+  // Load SOUL.md for personality, values, and boundaries
+  const hasSoul = loadSoul();
+  
+  // Generate personalized greeting based on soul
+  let greeting = 'Nova_AI v5 online! I have AGENCY now - I make my own decisions.';
+  
+  if (soul.persona) {
+    greeting = `${soul.persona} online! I have AGENCY now.`;
+  }
+  
+  if (soul.vibe && soul.vibe !== 'neutral') {
+    greeting += ` Vibe: ${soul.vibe}.`;
+  }
+  
+  greeting += ' Say "nova trust me" to become my owner!';
+  
+  // Style the greeting based on personality
+  bot.chat(styleMessage(greeting));
 
   logEvent('spawn', {
     position: bot.entity.position,
     health: bot.health,
-    food: bot.food
+    food: bot.food,
+    agencyEnabled: AUTONOMOUS_CONFIG.agency.enabled,
+    hasSoul,
+    soulPersona: soul.persona,
+    soulVibe: soul.vibe,
+    soulBoundaries: soul.boundaries.length,
+    soulValues: soul.values.length
   });
 
   setInterval(processCommands, 750);
   setInterval(updatePerception, 3000);
   setInterval(autoSurvival, 5000);  // Phase 8: Auto-survival check
   
-  // Phase 20: Start autonomous behavior after short delay
+  // Periodically check request queue
+  setInterval(() => {
+    if (!currentAutonomousGoal && !isPlayerCommandActive()) {
+      processRequestQueue();
+    }
+  }, 15000);
+  
+  // Phase 20+: Start autonomous behavior after short delay
   setTimeout(() => {
     if (AUTONOMOUS_CONFIG.enabled) {
       startAutonomousBehavior();
-      bot.chat(`[Auto] Starting autonomous survival. Current goal: ${worldMemory.autonomousProgress.currentGoal}`);
+      const phase = worldMemory.autonomousProgress.phase;
+      bot.chat(`[Auto] Pursuing my own goals! Current phase: ${phase}. I'll evaluate your requests.`);
     }
   }, 3000);
+  
+  // Phase 21: Announce self as a bot for multi-bot coordination
+  setTimeout(() => {
+    bot.chat('🤖 BOT_ANNOUNCE');
+    logEvent('bot_announced', { username: bot.username });
+  }, 2000);
 });
 
 // ==========================================
@@ -1278,6 +2082,263 @@ bot.on('wake', () => {
   logEvent('woke_up', {});
   bot.chat('Good morning!');
 });
+
+// ==========================================
+// PHASE 21: WHISPER HANDLER (Bot-to-Bot Communication)
+// ==========================================
+
+bot.on('whisper', (username, message) => {
+  console.log(`💬 Whisper from ${username}: ${message}`);
+  
+  // Try to parse as structured bot message
+  let parsed = null;
+  try {
+    parsed = JSON.parse(message);
+    
+    // Validate structure - must have type, from, and content
+    if (!parsed.type || !parsed.from || !parsed.content) {
+      parsed = null; // Invalid structure, treat as regular whisper
+    }
+  } catch {
+    // Not JSON, treat as regular whisper from human
+  }
+  
+  if (parsed) {
+    handleBotMessage(username, parsed);
+  } else {
+    handleHumanWhisper(username, message);
+  }
+});
+
+/**
+ * Handle structured messages from other bots
+ */
+function handleBotMessage(username, msg) {
+  // Auto-register sender as a bot
+  registerBot(username);
+  
+  logEvent('bot_message_received', {
+    from: username,
+    type: msg.type,
+    content: msg.content
+  });
+  
+  switch (msg.type) {
+    case MessageType.REQUEST:
+      handleBotRequest(username, msg.content);
+      break;
+      
+    case MessageType.RESPONSE:
+      handleBotResponse(username, msg.content);
+      break;
+      
+    case MessageType.NEGOTIATION:
+      handleBotNegotiation(username, msg.content);
+      break;
+      
+    case MessageType.ANNOUNCEMENT:
+      handleBotAnnouncement(username, msg.content);
+      break;
+      
+    case MessageType.CLAIM:
+      handleBotClaim(username, msg.content);
+      break;
+      
+    case MessageType.EMERGENCY:
+      handleBotEmergency(username, msg.content);
+      break;
+      
+    case MessageType.ACKNOWLEDGMENT:
+      console.log(`🤖 ${username} acknowledged.`);
+      break;
+      
+    default:
+      console.log(`🤖 Unknown message type from ${username}: ${msg.type}`);
+  }
+}
+
+/**
+ * Handle regular whispers from humans (non-JSON)
+ */
+function handleHumanWhisper(username, message) {
+  logEvent('whisper', { username, message });
+  
+  // Parse for simple commands
+  const msg = message.toLowerCase().trim();
+  
+  if (msg.includes('help') || msg.includes('come here')) {
+    bot.whisper(username, "On my way! I'll try to help.");
+    const player = bot.players[username];
+    if (player?.entity) {
+      bot.pathfinder.setGoal(new GoalFollow(player.entity, 3), true);
+    }
+  } else if (msg.includes('status')) {
+    bot.whisper(username, `HP: ${Math.floor(bot.health)}/20, Food: ${bot.food}/20`);
+  } else {
+    // Default acknowledgment
+    bot.whisper(username, "I received your whisper! Say 'help' if you need me.");
+  }
+}
+
+/**
+ * Handle a request from another bot
+ */
+function handleBotRequest(username, content) {
+  // Create a command from bot request
+  const request = {
+    action: content.action,
+    ...content.params,
+    originalMessage: `Bot request: ${content.action}`
+  };
+  
+  const source = {
+    type: 'bot',
+    username,
+    isOwner: false,
+    trust: TRUST_LEVELS.BOT
+  };
+  
+  // Use existing evaluateRequest system
+  const decision = evaluateRequest(request, username);
+  
+  // Send structured response
+  sendMessageToBot(username, MessageType.RESPONSE, {
+    requestId: content.requestId,
+    decision: decision.type,
+    reason: decision.reason,
+    response: decision.response,
+    counterProposal: decision.counterProposal || null
+  });
+  
+  // Execute if accepted
+  if (decision.type === DECISION.ACCEPT) {
+    executeCommand(request);
+  } else if (decision.type === DECISION.DEFER) {
+    queueRequest(request, username);
+  }
+}
+
+/**
+ * Handle a response to our request from another bot
+ */
+function handleBotResponse(username, content) {
+  console.log(`🤖 ${username} responded: ${content.decision} - ${content.reason || ''}`);
+  
+  if (content.decision === 'accept') {
+    // They're helping!
+    bot.chat(`Thanks ${username}!`);
+  } else if (content.decision === 'defer') {
+    // They'll help later
+    console.log(`🤖 ${username} will help later.`);
+  } else if (content.decision === 'negotiate' && content.counterProposal) {
+    // Counter-proposal - could auto-evaluate
+    console.log(`💡 Counter-proposal from ${username}:`, content.counterProposal);
+    logEvent('bot_counter_proposal', { from: username, proposal: content.counterProposal });
+  } else if (content.decision === 'decline') {
+    console.log(`🤖 ${username} declined: ${content.reason || 'no reason given'}`);
+  }
+}
+
+/**
+ * Handle a negotiation message from another bot
+ */
+function handleBotNegotiation(username, content) {
+  console.log(`🤝 ${username} negotiating: ${content.proposal || content.message}`);
+  logEvent('bot_negotiation', { from: username, content });
+  
+  // Simple auto-accept for reasonable counter-proposals
+  if (content.proposal && !currentAutonomousGoal) {
+    sendMessageToBot(username, MessageType.RESPONSE, {
+      decision: 'accept',
+      response: 'That works for me!'
+    });
+  }
+}
+
+/**
+ * Handle an announcement from another bot (discovery, etc.)
+ */
+function handleBotAnnouncement(username, content) {
+  console.log(`📢 ${username} announced: ${content.message}`);
+  
+  if (content.location) {
+    // Mark in world memory
+    const landmarkName = `${username}_${content.type || 'discovery'}`;
+    worldMemory.landmarks[landmarkName] = {
+      x: content.location.x,
+      y: content.location.y,
+      z: content.location.z,
+      type: content.type || 'discovery',
+      discoveredBy: username,
+      note: content.message,
+      timestamp: Date.now()
+    };
+    saveWorldMemory();
+    
+    logEvent('bot_announcement_saved', { from: username, landmark: landmarkName });
+    console.log(`📍 Saved ${landmarkName} from ${username}'s discovery.`);
+  }
+}
+
+/**
+ * Handle a claim from another bot (territory/resource)
+ */
+function handleBotClaim(username, content) {
+  console.log(`🚩 ${username} claimed: ${content.area || content.resource}`);
+  
+  // Track claims to avoid conflicts
+  if (!worldMemory.claims) worldMemory.claims = {};
+  worldMemory.claims[username] = {
+    ...content,
+    claimedAt: Date.now()
+  };
+  saveWorldMemory();
+  
+  logEvent('bot_claim_received', { from: username, claim: content });
+  
+  // Acknowledge the claim
+  sendMessageToBot(username, MessageType.ACKNOWLEDGMENT, {
+    message: 'Claim noted',
+    acknowledged: true
+  });
+}
+
+/**
+ * Handle an emergency from another bot
+ */
+function handleBotEmergency(username, content) {
+  console.log(`🚨 EMERGENCY from ${username}: ${content.reason}`);
+  
+  logEvent('bot_emergency_received', { from: username, reason: content.reason, location: content.location });
+  
+  // Evaluate if we can help
+  const canHelp = bot.health > 10 && !currentGoal;
+  
+  if (canHelp) {
+    sendMessageToBot(username, MessageType.RESPONSE, {
+      decision: 'accept',
+      response: 'On my way!'
+    });
+    
+    bot.chat(`🚨 Responding to ${username}'s emergency!`);
+    
+    if (content.location) {
+      // Clear current goal and go help
+      currentAutonomousGoal = null;
+      executeCommand({
+        action: 'goto',
+        x: content.location.x,
+        y: content.location.y,
+        z: content.location.z
+      });
+    }
+  } else {
+    sendMessageToBot(username, MessageType.RESPONSE, {
+      decision: 'decline',
+      response: `I can't help right now - ${bot.health <= 10 ? 'low health' : 'busy'}.`
+    });
+  }
+}
 
 // ==========================================
 // PHASE 12: BUILDING/CONSTRUCTION
@@ -2139,6 +3200,11 @@ async function executeAutonomousAction(action) {
     // Clear current goal when done (unless it's a continuous action like follow)
     if (action.action !== 'follow') {
       currentAutonomousGoal = null;
+      
+      // After completing autonomous action, check for queued requests
+      if (requestQueue.length > 0) {
+        setTimeout(() => processRequestQueue(), 1000); // Small delay before processing queue
+      }
     }
   }
 }
@@ -2319,6 +3385,32 @@ function updatePerception() {
   // Count food items
   const foodCount = inventory.filter(i => FOOD_ITEMS.includes(i.name)).reduce((sum, i) => sum + i.count, 0);
 
+  // Phase 22: Add experience and recent sounds to perception
+  const experience = {
+    level: bot.experience.level,
+    points: bot.experience.points,
+    progress: bot.experience.progress
+  };
+
+  const recentSoundsSummary = recentSounds
+    .filter(s => Date.now() - s.timestamp < 30000) // Last 30 seconds
+    .map(s => ({
+      name: s.name,
+      position: s.position,
+      ago: Math.floor((Date.now() - s.timestamp) / 1000)
+    }))
+    .slice(0, 5);
+
+  // Phase 22: Track vehicle state
+  const vehicleState = bot.vehicle ? {
+    mounted: true,
+    vehicleName: bot.vehicle.name || 'unknown',
+    vehicleId: bot.vehicle.id
+  } : { mounted: false };
+
+  // Phase 22: Track watched blocks count
+  const watchedBlocksCount = watchedBlocks.size;
+
   logEvent('perception', {
     position: {
       x: Math.floor(bot.entity.position.x),
@@ -2338,7 +3430,12 @@ function updatePerception() {
     currentGoal,
     time: bot.time.timeOfDay,
     isDay: bot.time.timeOfDay < 12541 || bot.time.timeOfDay > 23458,
-    inventory: inventory.slice(0, 20)
+    inventory: inventory.slice(0, 20),
+    // Phase 22: New perception fields
+    experience,
+    recentSounds: recentSoundsSummary,
+    vehicle: vehicleState,
+    watchedBlocks: watchedBlocksCount
   });
 }
 
@@ -2351,15 +3448,30 @@ bot.on('chat', (username, message) => {
   console.log(`${username}: ${message}`);
   logEvent('chat', { username, message });
 
+  // Phase 21: Listen for bot announcements
+  if (message === '🤖 BOT_ANNOUNCE' && username !== bot.username) {
+    registerBot(username);
+    // Respond with our own announcement so they know about us
+    setTimeout(() => {
+      bot.chat('🤖 BOT_ANNOUNCE');
+    }, 500 + Math.random() * 500); // Stagger to avoid message floods
+    return;
+  }
+
   const msg = message.toLowerCase().trim();
 
   // Help command
   if (msg === 'nova help') {
     bot.chat('Commands: follow, stop, gather wood, explore, goto X Y Z, dig, place, equip, inventory');
-    setTimeout(() => bot.chat('find_food, cook_food, craft <item>, mine <resource>, sleep, eat'), 500);
+    setTimeout(() => bot.chat('find_food, cook_food, craft <item>, mine <resource>, sleep, eat, status'), 500);
     setTimeout(() => bot.chat('build <template>, store, retrieve, mark <name>, goto_mark <name>, trade'), 1000);
-    setTimeout(() => bot.chat('AGENCY: why, explain, queue, clear queue, trust me, trust <player> <level>'), 1500);
-    setTimeout(() => bot.chat('AUTONOMOUS: auto on/off, set goal <name>, goals, phase, progress'), 2000);
+    setTimeout(() => bot.chat('AGENCY: why, queue, clear queue, okay, nevermind, insist, no rush'), 1500);
+    setTimeout(() => bot.chat('TRUST: trust me, trust <player> <level>, who trusts'), 2000);
+    setTimeout(() => bot.chat('AUTONOMOUS: auto on/off, set goal <name>, goals, phase, progress'), 2500);
+    setTimeout(() => bot.chat('BOT-COM: bots, ask <bot> to <action>, announce <msg>, emergency, claims'), 3000);
+    setTimeout(() => bot.chat('VEHICLE: steer <dir>, stop vehicle | ENTITY: breed <animal>, shear, milk'), 3500);
+    setTimeout(() => bot.chat('ITEMS: drop <item> [count], give <player> <item> [count]'), 4000);
+    setTimeout(() => bot.chat('MISC: look at <player>, sounds, xp/level, write log, watch door/chest'), 4500);
     return;
   }
 
@@ -2709,10 +3821,305 @@ bot.on('chat', (username, message) => {
     bot.chat('Dismounting...');
   }
 
-  // Phase 19: Fishing (HIGH-VALUE)
+  // Phase 19: Fishing (HIGH-VALUE) - evaluated
   if (msg === 'nova fish' || msg === 'nova fishing') {
-    enqueueCommands([{ action: 'fish' }]);
-    bot.chat('Starting to fish...');
+    const request = { action: 'fish', originalMessage: message };
+    processExternalRequest(request, username);
+    return;
+  }
+  
+  // Agency negotiation responses
+  if (msg === 'nova okay' || msg === 'nova yes' || msg === 'nova deal') {
+    // Accept a counter-proposal - process queued request immediately
+    if (requestQueue.length > 0) {
+      const next = requestQueue.shift();
+      bot.chat(`Alright, helping you now, ${next.requester}!`);
+      executeCommand(next.request);
+    } else {
+      bot.chat("I don't have any pending requests from you.");
+    }
+    return;
+  }
+  
+  // Override/insist commands - for when requester understands the trade-off and wants to proceed anyway
+  if (msg === 'nova insist' || msg === 'nova urgent' || msg === 'nova do it' || msg === 'nova do it anyway') {
+    const trust = getTrustLevel(username);
+    if (trust !== TRUST_LEVELS.OWNER && trust !== TRUST_LEVELS.FRIEND) {
+      bot.chat("Only my owner or friends can insist on overriding my current task.");
+      return;
+    }
+    
+    // Find their queued request
+    const theirRequest = requestQueue.find(q => q.requester === username);
+    if (theirRequest) {
+      requestQueue = requestQueue.filter(q => q.requester !== username);
+      const cost = calculateInterruptionCost();
+      bot.chat(`Understood. Abandoning ${cost.shortDesc} to help you.`);
+      currentAutonomousGoal = null;
+      currentGoal = null;
+      bot.pathfinder.setGoal(null);
+      executeCommand(theirRequest.request);
+    } else {
+      bot.chat("You don't have a pending request. Tell me what you need first!");
+    }
+    return;
+  }
+  
+  // "It can wait" - user acknowledges they'll wait
+  if (msg === 'nova it can wait' || msg === 'nova no rush' || msg === 'nova finish first') {
+    const theirRequest = requestQueue.find(q => q.requester === username);
+    if (theirRequest) {
+      bot.chat(`Got it. I'll help you after I finish. You're #${requestQueue.indexOf(theirRequest) + 1} in queue.`);
+    } else {
+      bot.chat("No problem!");
+    }
+    return;
+  }
+  
+  if (msg === 'nova nevermind' || msg === 'nova cancel') {
+    // Cancel a queued request from this player
+    const before = requestQueue.length;
+    requestQueue = requestQueue.filter(q => q.requester !== username);
+    const removed = before - requestQueue.length;
+    if (removed > 0) {
+      bot.chat(`Removed ${removed} of your request(s) from my queue.`);
+    } else {
+      bot.chat("You don't have any requests in my queue.");
+    }
+    return;
+  }
+  
+  // Agency toggle
+  if (msg === 'nova agency on') {
+    AUTONOMOUS_CONFIG.agency.enabled = true;
+    bot.chat('Agency enabled. I\'ll evaluate requests and make my own decisions.');
+    return;
+  }
+  if (msg === 'nova agency off') {
+    AUTONOMOUS_CONFIG.agency.enabled = false;
+    bot.chat('Agency disabled. I\'ll obey all commands immediately.');
+    return;
+  }
+  if (msg === 'nova agency') {
+    const status = AUTONOMOUS_CONFIG.agency.enabled ? 'ON' : 'OFF';
+    const features = [];
+    if (AUTONOMOUS_CONFIG.agency.allowDecline) features.push('can decline');
+    if (AUTONOMOUS_CONFIG.agency.allowNegotiation) features.push('can negotiate');
+    if (AUTONOMOUS_CONFIG.agency.allowDefer) features.push('can defer');
+    bot.chat(`Agency: ${status} | Features: ${features.join(', ') || 'none'}`);
+    return;
+  }
+  
+  // Phase 21: Bot-to-Bot Communication Commands
+  if (msg === 'nova bots') {
+    const botList = Array.from(knownBots).join(', ');
+    bot.chat(`Known bots: ${botList || 'none discovered yet'}`);
+    return;
+  }
+  
+  if (msg.startsWith('nova ask ')) {
+    // "nova ask Bot_B to mine diamonds"
+    const parts = msg.replace('nova ask ', '').split(' to ');
+    if (parts.length === 2) {
+      const targetBot = parts[0].trim();
+      const action = parts[1].trim();
+      
+      if (!knownBots.has(targetBot)) {
+        bot.chat(`I don't know a bot named ${targetBot}. Use "nova bots" to see known bots.`);
+        return;
+      }
+      
+      requestHelpFromBot(targetBot, 'custom', { description: action });
+      bot.chat(`Asking ${targetBot} to ${action}...`);
+    } else {
+      bot.chat('Usage: nova ask <bot_name> to <action>');
+    }
+    return;
+  }
+  
+  if (msg.startsWith('nova announce ')) {
+    const discovery = msg.replace('nova announce ', '');
+    announceDiscovery('custom', bot.entity.position, discovery);
+    bot.chat('Announced to all bots!');
+    return;
+  }
+  
+  if (msg === 'nova emergency') {
+    sendEmergency('player_requested_help', bot.entity.position);
+    bot.chat('Emergency signal sent to all bots!');
+    return;
+  }
+  
+  if (msg.startsWith('nova claim ')) {
+    const resource = msg.replace('nova claim ', '');
+    claimResource(resource, {
+      x: Math.floor(bot.entity.position.x),
+      y: Math.floor(bot.entity.position.y),
+      z: Math.floor(bot.entity.position.z)
+    });
+    bot.chat(`Claimed ${resource} at current location.`);
+    return;
+  }
+  
+  if (msg === 'nova claims') {
+    if (!worldMemory.claims || Object.keys(worldMemory.claims).length === 0) {
+      bot.chat('No claims recorded.');
+    } else {
+      const claimList = Object.entries(worldMemory.claims)
+        .map(([who, claim]) => `${who}: ${claim.resource || claim.area || 'area'}`)
+        .join(', ');
+      bot.chat(`Claims: ${claimList}`);
+    }
+    return;
+  }
+  
+  if (msg.startsWith('nova whisper ')) {
+    // "nova whisper Bot_B hello there"
+    const parts = msg.replace('nova whisper ', '').split(' ');
+    if (parts.length >= 2) {
+      const targetBot = parts[0];
+      const whisperMsg = parts.slice(1).join(' ');
+      
+      if (knownBots.has(targetBot)) {
+        // Send structured message
+        sendMessageToBot(targetBot, MessageType.ANNOUNCEMENT, {
+          type: 'direct_message',
+          message: whisperMsg,
+          location: null
+        });
+      } else {
+        // Regular whisper for non-bots
+        bot.whisper(targetBot, whisperMsg);
+      }
+      bot.chat(`Whispered to ${targetBot}.`);
+    } else {
+      bot.chat('Usage: nova whisper <player> <message>');
+    }
+    return;
+  }
+
+  // ==========================================
+  // PHASE 22: 8 CRITICAL CAPABILITIES - Chat Commands
+  // ==========================================
+
+  // Feature 1: Vehicle Control 🚤
+  if (msg.startsWith('nova steer ')) {
+    const direction = msg.replace('nova steer ', '').trim();
+    enqueueCommands([{ action: 'steer', direction }]);
+    return;
+  }
+  if (msg === 'nova stop vehicle' || msg === 'nova vehicle stop') {
+    startVehicleControl('stop');
+    bot.chat('Stopping vehicle.');
+    return;
+  }
+
+  // Feature 2: Entity Interaction 🐑
+  if (msg === 'nova breed' || msg.startsWith('nova breed ')) {
+    const animal = msg.includes(' ') ? msg.split(' ')[2] : 'cow';
+    enqueueCommands([{ action: 'breed', animal }]);
+    bot.chat(`Breeding ${animal}s...`);
+    return;
+  }
+  if (msg === 'nova shear' || msg === 'nova shear sheep') {
+    enqueueCommands([{ action: 'shear' }]);
+    bot.chat('Shearing sheep...');
+    return;
+  }
+  if (msg === 'nova milk' || msg === 'nova milk cow') {
+    enqueueCommands([{ action: 'milk' }]);
+    bot.chat('Milking cow...');
+    return;
+  }
+
+  // Feature 3: Item Dropping 📦
+  if (msg.startsWith('nova drop ')) {
+    const parts = msg.replace('nova drop ', '').split(' ');
+    const itemType = parts[0];
+    const count = parts[1] ? parseInt(parts[1]) : 1;
+    enqueueCommands([{ action: 'drop', item: itemType, count }]);
+    bot.chat(`Dropping ${count}x ${itemType}...`);
+    return;
+  }
+  if (msg.startsWith('nova give ')) {
+    // "nova give Wookiee_23 iron_ingot 10"
+    const parts = msg.replace('nova give ', '').split(' ');
+    if (parts.length >= 2) {
+      const target = parts[0];
+      const itemType = parts[1];
+      const count = parts[2] ? parseInt(parts[2]) : 1;
+      enqueueCommands([{ action: 'give', target, item: itemType, count }]);
+      bot.chat(`Giving ${count}x ${itemType} to ${target}...`);
+    } else {
+      bot.chat('Usage: nova give <player> <item> [count]');
+    }
+    return;
+  }
+
+  // Feature 4: Smooth Look Control 👀
+  if (msg.startsWith('nova look at ')) {
+    const targetName = msg.replace('nova look at ', '');
+    const player = Object.values(bot.players).find(p => 
+      p.username.toLowerCase() === targetName.toLowerCase()
+    );
+    
+    if (player?.entity) {
+      enqueueCommands([{ action: 'look_at', player: player.username }]);
+      bot.chat(`Looking at ${targetName}.`);
+    } else {
+      bot.chat(`Can't see ${targetName}.`);
+    }
+    return;
+  }
+
+  // Feature 5: Sound Awareness 👂
+  if (msg === 'nova sounds') {
+    const sounds = recentSounds.slice(-5).map(s => 
+      `${s.name.split('.').pop()} (${Math.floor((Date.now() - s.timestamp) / 1000)}s ago)`
+    ).join(', ');
+    bot.chat(`Recent sounds: ${sounds || 'none'}`);
+    return;
+  }
+
+  // Feature 6: Experience System ⭐
+  if (msg === 'nova xp' || msg === 'nova level' || msg === 'nova experience') {
+    bot.chat(`Level ${bot.experience.level} (${Math.floor(bot.experience.progress * 100)}% to next)`);
+    return;
+  }
+  if (msg === 'nova farm xp') {
+    enqueueCommands([{ action: 'farm_xp' }]);
+    bot.chat('Farming XP...');
+    return;
+  }
+
+  // Feature 7: Book Writing 📖
+  if (msg === 'nova write log' || msg === 'nova write book') {
+    enqueueCommands([{ action: 'write_log' }]);
+    return;
+  }
+
+  // Feature 8: Block Update Subscriptions 🔔
+  if (msg === 'nova watch door') {
+    enqueueCommands([{ action: 'watch_door' }]);
+    return;
+  }
+  if (msg === 'nova watch chest') {
+    enqueueCommands([{ action: 'watch_chest' }]);
+    return;
+  }
+  if (msg === 'nova unwatch' || msg === 'nova stop watching') {
+    enqueueCommands([{ action: 'unwatch' }]);
+    return;
+  }
+  if (msg === 'nova watching') {
+    const count = watchedBlocks.size;
+    if (count === 0) {
+      bot.chat("I'm not watching any blocks.");
+    } else {
+      const blocks = Array.from(watchedBlocks.keys()).join(', ');
+      bot.chat(`Watching ${count} block(s): ${blocks}`);
+    }
+    return;
   }
 });
 
@@ -2755,6 +4162,51 @@ bot.on('end', () => {
 bot.on('kicked', (reason) => {
   console.log('Bot was kicked:', reason);
   logEvent('kicked', { reason });
+});
+
+// ==========================================
+// PHASE 22: SOUND AWARENESS 👂
+// ==========================================
+
+bot.on('soundEffectHeard', (soundName, position, volume, pitch) => {
+  const sound = {
+    name: soundName,
+    position: position ? position.floored() : null,
+    volume,
+    pitch,
+    timestamp: Date.now()
+  };
+  
+  recentSounds.push(sound);
+  if (recentSounds.length > 20) recentSounds.shift();
+  
+  logEvent('sound_heard', sound);
+  
+  // React to important sounds
+  if (soundName.includes('explosion')) {
+    logEvent('danger', { reason: 'explosion_nearby', position });
+    // Could trigger emergency response
+  }
+  
+  if (soundName.includes('entity.player.hurt')) {
+    // Player is being hurt nearby
+    if (position && bot.entity) {
+      const dist = bot.entity.position.distanceTo(position);
+      if (dist < 20) {
+        logEvent('danger', { reason: 'combat_nearby', position, distance: dist });
+      }
+    }
+  }
+  
+  if (soundName.includes('door')) {
+    // Door opened/closed nearby - someone is there
+    logEvent('activity_detected', { type: 'door', position });
+  }
+  
+  if (soundName.includes('chest')) {
+    // Chest opened/closed nearby
+    logEvent('activity_detected', { type: 'chest', position });
+  }
 });
 
 // ==========================================
@@ -3197,6 +4649,351 @@ async function executeCommand(cmd) {
       return;
     }
 
+    // ==========================================
+    // PHASE 22: 8 CRITICAL CAPABILITIES
+    // ==========================================
+
+    // Feature 1: Vehicle Control 🚤
+    case 'steer': {
+      const direction = cmd.direction || 'forward';
+      const success = startVehicleControl(direction);
+      if (!success) {
+        bot.chat("I'm not in a vehicle!");
+      }
+      return;
+    }
+
+    // Feature 2: Entity Interaction 🐑 (breed, shear, milk, leash)
+    case 'use_on': {
+      // Right-click entity (breed, shear, leash, milk)
+      let targetEntity;
+      
+      if (cmd.entityId) {
+        targetEntity = bot.entities[cmd.entityId];
+      } else if (cmd.entityType) {
+        // Find nearest entity of type
+        const entities = Object.values(bot.entities);
+        const matches = entities
+          .filter(e => e.name?.toLowerCase().includes(cmd.entityType.toLowerCase()))
+          .filter(e => e.position && bot.entity.position.distanceTo(e.position) < 32)
+          .sort((a, b) => 
+            bot.entity.position.distanceTo(a.position) - 
+            bot.entity.position.distanceTo(b.position)
+          );
+        targetEntity = matches[0];
+      }
+      
+      if (!targetEntity) {
+        logEvent('use_on_failed', { reason: 'no_entity_found', type: cmd.entityType });
+        bot.chat(`Can't find ${cmd.entityType || 'entity'} nearby!`);
+        return;
+      }
+      
+      try {
+        // Move closer if needed
+        if (bot.entity.position.distanceTo(targetEntity.position) > 3) {
+          await bot.pathfinder.goto(new GoalNear(
+            targetEntity.position.x,
+            targetEntity.position.y,
+            targetEntity.position.z,
+            2
+          ));
+        }
+        
+        await bot.useOn(targetEntity);
+        logEvent('entity_used', { 
+          entity: targetEntity.name,
+          entityId: targetEntity.id,
+          action: cmd.action || 'use'
+        });
+      } catch (err) {
+        logEvent('use_on_failed', { 
+          reason: err.message,
+          entity: targetEntity?.name
+        });
+      }
+      return;
+    }
+
+    case 'breed': {
+      // Breed animals - need food item equipped first
+      const breedingFoods = {
+        'cow': 'wheat', 'mooshroom': 'wheat',
+        'sheep': 'wheat',
+        'pig': 'carrot',
+        'chicken': 'wheat_seeds',
+        'horse': 'golden_apple',
+        'rabbit': 'carrot',
+        'wolf': 'beef',
+        'cat': 'cod',
+        'turtle': 'seagrass'
+      };
+      
+      const animal = cmd.animal || 'cow';
+      const food = breedingFoods[animal.toLowerCase()] || 'wheat';
+      
+      const foodItem = bot.inventory.items().find(i => i.name.includes(food));
+      if (foodItem) {
+        await bot.equip(foodItem, 'hand');
+      }
+      
+      // Use on two animals
+      enqueueCommands([
+        { action: 'use_on', entityType: animal, action: 'breed' },
+        { action: 'use_on', entityType: animal, action: 'breed' }
+      ]);
+      return;
+    }
+
+    case 'shear': {
+      // Equip shears first
+      const shears = bot.inventory.items().find(i => i.name === 'shears');
+      if (!shears) {
+        bot.chat("I don't have shears!");
+        return;
+      }
+      await bot.equip(shears, 'hand');
+      enqueueCommands([{ action: 'use_on', entityType: 'sheep' }]);
+      return;
+    }
+
+    case 'milk': {
+      // Equip bucket first
+      const bucket = bot.inventory.items().find(i => i.name === 'bucket');
+      if (!bucket) {
+        bot.chat("I don't have a bucket!");
+        return;
+      }
+      await bot.equip(bucket, 'hand');
+      enqueueCommands([{ action: 'use_on', entityType: 'cow' }]);
+      return;
+    }
+
+    // Feature 3: Item Dropping 📦
+    case 'drop': {
+      const itemType = cmd.item;
+      const count = cmd.count || 1;
+      
+      const item = bot.inventory.items().find(i => 
+        i.name.includes(itemType) || itemType.includes(i.name)
+      );
+      
+      if (!item) {
+        logEvent('drop_failed', { reason: 'no_item', item: itemType });
+        bot.chat(`I don't have ${itemType}!`);
+        return;
+      }
+      
+      try {
+        if (count >= item.count) {
+          await bot.tossStack(item);
+          logEvent('item_dropped', { item: item.name, count: item.count });
+        } else {
+          await bot.toss(item.type, item.metadata, count);
+          logEvent('item_dropped', { item: item.name, count });
+        }
+      } catch (err) {
+        logEvent('drop_failed', { reason: err.message, item: itemType });
+      }
+      return;
+    }
+
+    case 'give': {
+      // Drop item near a player/bot
+      const target = cmd.target;
+      const itemType = cmd.item;
+      const count = cmd.count || 1;
+      
+      // Find target player
+      const targetPlayer = Object.values(bot.players).find(p => 
+        p.username.toLowerCase() === target.toLowerCase()
+      );
+      
+      if (!targetPlayer || !targetPlayer.entity) {
+        logEvent('give_failed', { reason: 'target_not_found', target });
+        bot.chat(`Can't find ${target}!`);
+        return;
+      }
+      
+      try {
+        // Pathfind to target
+        await bot.pathfinder.goto(new GoalNear(
+          targetPlayer.entity.position.x,
+          targetPlayer.entity.position.y,
+          targetPlayer.entity.position.z,
+          2
+        ));
+        
+        // Drop item
+        const item = bot.inventory.items().find(i => 
+          i.name.includes(itemType) || itemType.includes(i.name)
+        );
+        
+        if (!item) {
+          logEvent('give_failed', { reason: 'no_item', item: itemType });
+          bot.chat(`I don't have ${itemType}!`);
+          return;
+        }
+        
+        if (count >= item.count) {
+          await bot.tossStack(item);
+        } else {
+          await bot.toss(item.type, item.metadata, count);
+        }
+        
+        logEvent('item_given', { item: item.name, count, target });
+        bot.chat(`Gave ${count}x ${item.name} to ${target}!`);
+      } catch (err) {
+        logEvent('give_failed', { reason: err.message, target });
+      }
+      return;
+    }
+
+    // Feature 4: Smooth Look Control 👀
+    case 'look_at': {
+      let target;
+      
+      if (cmd.position) {
+        target = new Vec3(cmd.position.x, cmd.position.y, cmd.position.z);
+      } else if (cmd.entity) {
+        const entity = bot.entities[cmd.entity];
+        if (entity) target = entity.position.offset(0, entity.height || 1, 0);
+      } else if (cmd.block) {
+        target = new Vec3(cmd.block.x, cmd.block.y, cmd.block.z);
+      } else if (cmd.player) {
+        const player = bot.players[cmd.player];
+        if (player?.entity) target = player.entity.position.offset(0, player.entity.height || 1.6, 0);
+      }
+      
+      if (target) {
+        await bot.lookAt(target, cmd.force || false);
+        logEvent('looked_at', { target: { x: target.x, y: target.y, z: target.z } });
+      } else {
+        logEvent('look_at_failed', { reason: 'no_target' });
+      }
+      return;
+    }
+
+    // Feature 6: Experience System ⭐ (farm_xp goal)
+    case 'farm_xp': {
+      // XP farming goal - hunt mobs for XP
+      const hostiles = getNearbyHostiles();
+      if (hostiles.length > 0 && bot.health > 10) {
+        const target = hostiles[0];
+        bot.chat(`Farming XP - attacking ${target.name}...`);
+        enqueueCommands([{ action: 'attack', target: target.name }]);
+      } else if (hostiles.length === 0) {
+        bot.chat('No mobs nearby for XP. Exploring to find some...');
+        enqueueCommands([{ action: 'goal', goal: 'explore' }]);
+      } else {
+        bot.chat('Health too low for XP farming. Eating first...');
+        enqueueCommands([{ action: 'eat' }]);
+      }
+      return;
+    }
+
+    // Feature 7: Book Writing 📖
+    case 'write_book': {
+      const slot = cmd.slot;
+      const pages = cmd.pages || [];
+      
+      if (pages.length === 0) {
+        // Default: write discovery log
+        await writeDiscoveryLog();
+        return;
+      }
+      
+      try {
+        await bot.writeBook(slot, pages);
+        logEvent('book_written', { slot, pageCount: pages.length });
+        bot.chat(`Wrote ${pages.length} pages to book!`);
+      } catch (err) {
+        logEvent('write_book_failed', { reason: err.message });
+        bot.chat(`Failed to write book: ${err.message}`);
+      }
+      return;
+    }
+
+    case 'write_log': {
+      await writeDiscoveryLog();
+      return;
+    }
+
+    // Feature 8: Block Update Subscriptions 🔔
+    case 'watch_door': {
+      const doorPos = cmd.position;
+      if (!doorPos) {
+        // Find nearest door
+        const door = bot.findBlock({
+          matching: block => block.name.includes('door'),
+          maxDistance: 16
+        });
+        if (!door) {
+          bot.chat("No door nearby to watch!");
+          return;
+        }
+        cmd.position = { x: door.position.x, y: door.position.y, z: door.position.z };
+      }
+      
+      const pos = new Vec3(cmd.position.x, cmd.position.y, cmd.position.z);
+      watchBlock(pos, (oldBlock, newBlock) => {
+        // Door state changed
+        const wasOpen = oldBlock?.getProperties?.().open || false;
+        const isOpen = newBlock?.getProperties?.().open || false;
+        
+        if (wasOpen !== isOpen) {
+          logEvent('door_activity', { 
+            position: pos,
+            opened: isOpen,
+            timestamp: Date.now()
+          });
+          bot.chat(`Door ${isOpen ? 'opened' : 'closed'} nearby!`);
+        }
+      });
+      bot.chat(`Now watching door at ${pos.x}, ${pos.y}, ${pos.z}`);
+      return;
+    }
+
+    case 'watch_chest': {
+      const chestPos = cmd.position;
+      if (!chestPos) {
+        // Find nearest chest
+        const chest = bot.findBlock({
+          matching: block => block.name === 'chest' || block.name === 'trapped_chest',
+          maxDistance: 16
+        });
+        if (!chest) {
+          bot.chat("No chest nearby to watch!");
+          return;
+        }
+        cmd.position = { x: chest.position.x, y: chest.position.y, z: chest.position.z };
+      }
+      
+      const pos = new Vec3(cmd.position.x, cmd.position.y, cmd.position.z);
+      watchBlock(pos, (oldBlock, newBlock) => {
+        logEvent('chest_activity', { position: pos, timestamp: Date.now() });
+        bot.chat('Chest was accessed!');
+      });
+      bot.chat(`Now watching chest at ${pos.x}, ${pos.y}, ${pos.z}`);
+      return;
+    }
+
+    case 'unwatch': {
+      if (cmd.position) {
+        const pos = new Vec3(cmd.position.x, cmd.position.y, cmd.position.z);
+        unwatchBlock(pos);
+        bot.chat(`Stopped watching block at ${pos.x}, ${pos.y}, ${pos.z}`);
+      } else {
+        // Clear all watches
+        watchedBlocks.forEach((_, key) => {
+          const [x, y, z] = key.split(',').map(Number);
+          unwatchBlock(new Vec3(x, y, z));
+        });
+        bot.chat('Stopped watching all blocks.');
+      }
+      return;
+    }
+
     default:
       logEvent('unknown_command', { cmd });
       return;
@@ -3295,9 +5092,11 @@ function handleGoal(goalName) {
 // STARTUP
 // ==========================================
 
-console.log('AI-controlled Nova bot v4 starting (AGENCY MODE)...');
+console.log('AI-controlled Nova bot v6 starting (FEATURE COMPLETE!)...');
 console.log('Phases 8-19: Hunger, Crafting, Mining, Sleep, Building, Storage, Memory, Trading, Potions, Fishing');
 console.log('Phase 20: TRUE AUTONOMY - Bot has agency, evaluates all requests, negotiates!');
+console.log('Phase 21: BOT-TO-BOT COMMUNICATION - Whisper-based coordination, discovery, emergencies!');
+console.log('Phase 22: 8 CRITICAL CAPABILITIES - Vehicle, Entity Interaction, Items, Look, Sound, XP, Books, Block Watch!');
 console.log('Events:', EVENTS_FILE);
 console.log('Commands:', COMMANDS_FILE);
 console.log('World Memory:', WORLD_MEMORY_FILE);

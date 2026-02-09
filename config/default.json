@@ -13,6 +13,12 @@
     "commands": "commands.json",
     "worldMemory": "world-memory.json"
   },
+  "soul": {
+    "enabled": true,
+    "path": "/data/.openclaw/workspace/SOUL.md",
+    "fallbackPersonality": "neutral",
+    "comment": "SOUL.md defines bot personality, values, and boundaries. Set SOUL_PATH env var to override path."
+  },
   "intervals": {
     "commandCheck": 750,
     "perception": 3000,

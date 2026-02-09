@@ -6,6 +6,24 @@ A complete autonomous survival system built on [Mineflayer](https://github.com/P
 
 > **🤖 Agent-Agnostic:** This bot adapts to any AI agent. Set `BOT_USERNAME=YourBot` and all commands become `yourbot help`, `yourbot follow`, etc. No hardcoded names!
 
+## ⚡ Quick Deploy
+
+```bash
+git clone https://github.com/solorzao/openclaw-minecraft-plugin.git
+cd openclaw-minecraft-plugin
+npm install
+
+# Configure your bot (REQUIRED - no hardcoding!)
+export BOT_USERNAME=Nova_AI        # Your bot's name
+export MC_HOST=your.server.com     # Your Minecraft server
+export MC_PORT=25565               # Server port
+
+# Start the bot
+node bot.js
+```
+
+Commands will use your bot's name: `nova help`, `nova follow`, `nova mine iron`, etc.
+
 ## 🎮 Features
 
 ### ✅ FEATURE COMPLETE (22 Phases Implemented)
@@ -138,30 +156,61 @@ BOT_USERNAME=MyBot_AI MC_HOST=myserver.com node bot.js
 
 ### Configuration
 
-**Environment Variables (Recommended):**
+> **⚠️ IMPORTANT:** Always configure via environment variables. Never hardcode bot names in the code - this plugin is designed to be reusable by any AI agent.
+
+**Environment Variables:**
+
+| Variable | Description | Example | Default |
+|----------|-------------|---------|---------|
+| `BOT_USERNAME` | Bot's Minecraft username (sets command prefix) | `Nova_AI`, `Claude_Bot` | `Bot_AI` |
+| `MC_HOST` | Minecraft server hostname/IP | `myserver.com`, `187.77.2.50` | `187.77.2.50` |
+| `MC_PORT` | Minecraft server port | `25565`, `25568` | `25568` |
+| `SOUL_PATH` | Path to SOUL.md (personality file) | `/path/to/SOUL.md` | `/data/.openclaw/workspace/SOUL.md` |
+
+**Usage Examples:**
+
 ```bash
-# Set your bot's name (commands will be "{name} help", "{name} follow", etc.)
-export BOT_USERNAME=MyBot_AI
-
-# Server connection
-export MC_HOST=myserver.com
+# Example 1: Nova_AI on local test server
+export BOT_USERNAME=Nova_AI
+export MC_HOST=localhost
 export MC_PORT=25565
-
-# Run the bot
 node bot.js
+
+# Example 2: Claude_Bot on production server
+BOT_USERNAME=Claude_Bot MC_HOST=myserver.com MC_PORT=25565 node bot.js
+
+# Example 3: Custom personality + name
+BOT_USERNAME=Wally_Bot SOUL_PATH=./personalities/wally.md node bot.js
+
+# Example 4: Run via npm with env vars
+BOT_USERNAME=Nova_AI npm start
 ```
 
-**Or edit `bot.js` directly:**
+**Command Prefix Behavior:**
 
-```javascript
-const bot = mineflayer.createBot({
-  host: process.env.MC_HOST || '187.77.2.50',     // Your server IP
-  port: parseInt(process.env.MC_PORT) || 25568,   // Your server port
-  username: process.env.BOT_USERNAME || 'Bot_AI'  // Bot username (offline mode)
-});
+The bot extracts the command prefix from `BOT_USERNAME`:
+- `BOT_USERNAME=Nova_AI` → commands: `nova help`, `nova follow`, `nova status`
+- `BOT_USERNAME=Claude_Bot` → commands: `claude help`, `claude follow`, `claude status`
+- `BOT_USERNAME=GPT_Agent` → commands: `gpt help`, `gpt follow`, `gpt status`
+
+**Persistent Configuration (Recommended):**
+
+For production deployments, set environment variables in a `.env` file or systemd service:
+
+```bash
+# .env file
+BOT_USERNAME=Nova_AI
+MC_HOST=myserver.com
+MC_PORT=25565
+SOUL_PATH=/data/.openclaw/workspace/SOUL.md
 ```
 
-**Command Prefix:** Commands automatically use the bot's name prefix. If `BOT_USERNAME=Claude_Bot`, commands are `claude help`, `claude follow`, etc.
+Then load with:
+```bash
+export $(cat .env | xargs) && node bot.js
+```
+
+Or use a systemd service (see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for examples).
 
 ## 🤖 How It Works
 

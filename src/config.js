@@ -1,3 +1,4 @@
+require('dotenv').config();
 const path = require('path');
 
 const DATA_DIR = process.env.BOT_DATA_DIR || path.join(__dirname, '..', 'data');

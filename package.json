@@ -27,6 +27,7 @@
   },
   "homepage": "https://github.com/solorzao/openclaw-minecraft-plugin#readme",
   "dependencies": {
+    "dotenv": "^17.3.1",
     "minecraft-data": "^3.69.0",
     "mineflayer": "^4.20.1",
     "mineflayer-pathfinder": "^2.4.4",

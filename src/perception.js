@@ -28,15 +28,35 @@ function getNearbyPlayers(bot) {
     }));
 }
 
+// Entities to exclude from nearbyEntities (noise, not useful for agent decisions)
+const CLUTTER_ENTITIES = ['arrow', 'item', 'experience_orb', 'falling_block', 'area_effect_cloud'];
+
 function getNearbyEntities(bot) {
+  const playerNames = new Set(
+    Object.values(bot.players).map(p => p.username)
+  );
+  const botY = bot.entity.position.y;
+
   return Object.values(bot.entities)
-    .filter(e => e !== bot.entity && e.position &&
-      bot.entity.position.distanceTo(e.position) < 32)
+    .filter(e => {
+      if (e === bot.entity || !e.position) return false;
+      if (e.type === 'player' || playerNames.has(e.username)) return false;
+
+      const name = (e.name || '').toLowerCase();
+
+      // Filter out clutter entities
+      if (CLUTTER_ENTITIES.includes(name)) return false;
+
+      // Filter out mobs that are too far vertically (underground/above, unreachable)
+      const yDiff = Math.abs(e.position.y - botY);
+      if (yDiff > 10) return false;
+
+      return bot.entity.position.distanceTo(e.position) < 32;
+    })
     .map(e => {
       const name = e.name || e.displayName || 'unknown';
       let type = 'passive';
-      if (e.type === 'player') type = 'player';
-      else if (HOSTILE_MOBS.includes(name.toLowerCase())) type = 'hostile';
+      if (HOSTILE_MOBS.includes(name.toLowerCase())) type = 'hostile';
 
       return {
         name,

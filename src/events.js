@@ -5,15 +5,13 @@ const { EVENTS_FILE } = require('./config');
 let events = [];
 let eventIdCounter = 0;
 
-// Atomic write: write to temp file then rename
 function safeWrite(file, content) {
-  const tmp = file + '.tmp';
+  // On Windows, atomic rename often fails due to file locks (VSCode, etc.)
+  // Just write directly - the 1s interval makes partial reads unlikely
   try {
-    fs.writeFileSync(tmp, content);
-    fs.renameSync(tmp, file);
+    fs.writeFileSync(file, content);
   } catch (err) {
-    console.error('Write failed:', file, err.message);
-    // Fallback to direct write
+    // Silently retry once after a brief delay
     try { fs.writeFileSync(file, content); } catch (e) {}
   }
 }

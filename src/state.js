@@ -3,9 +3,26 @@ const { safeWrite } = require('./events');
 const { getNearbyPlayers, getNearbyEntities, getNearbyBlocks, getInventory, getTimePhase } = require('./perception');
 
 let currentAction = null;
+let lastHealth = null;
+
+function deduplicateEntities(entities) {
+  const seen = new Set();
+  return entities.filter(e => {
+    // Use position as dedup key - two entities at same spot are duplicates
+    const key = `${e.position.x},${e.position.y},${e.position.z}`;
+    // Keep the first one (players from getNearbyPlayers come first, with proper names)
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 
 function setCurrentAction(action) {
   currentAction = action;
+}
+
+function getCurrentAction() {
+  return currentAction;
 }
 
 function clearCurrentAction() {
@@ -14,11 +31,30 @@ function clearCurrentAction() {
 
 function buildState(bot) {
   const pos = bot.entity.position;
+
+  // Track health trend
+  const health = bot.health;
+  let healthTrend = 'stable';
+  if (lastHealth !== null) {
+    if (health > lastHealth) healthTrend = 'healing';
+    else if (health < lastHealth) healthTrend = 'taking_damage';
+  }
+  lastHealth = health;
+
+  // Biome and weather
+  let biome = 'unknown';
+  try {
+    const block = bot.blockAt(pos.floored());
+    biome = block?.biome?.name || block?.biome?.toString?.() || 'unknown';
+  } catch (e) {}
+  const weather = bot.isRaining ? (bot.thunderState ? 'thunder' : 'rain') : 'clear';
+
   return {
     timestamp: new Date().toISOString(),
     bot: {
       position: { x: Math.floor(pos.x), y: Math.floor(pos.y), z: Math.floor(pos.z) },
-      health: bot.health,
+      health,
+      healthTrend,
       food: bot.food,
       experience: {
         level: bot.experience.level,
@@ -27,12 +63,14 @@ function buildState(bot) {
       isInWater: bot.entity.isInWater,
       isSleeping: bot.isSleeping,
       gameMode: bot.game.gameMode,
+      biome,
+      weather,
     },
     inventory: getInventory(bot),
-    nearbyEntities: [
+    nearbyEntities: deduplicateEntities([
       ...getNearbyPlayers(bot),
       ...getNearbyEntities(bot),
-    ],
+    ]),
     nearbyBlocks: getNearbyBlocks(bot),
     time: {
       timeOfDay: bot.time.timeOfDay,
@@ -51,4 +89,4 @@ function writeState(bot) {
   }
 }
 
-module.exports = { writeState, buildState, setCurrentAction, clearCurrentAction };
+module.exports = { writeState, buildState, setCurrentAction, getCurrentAction, clearCurrentAction };

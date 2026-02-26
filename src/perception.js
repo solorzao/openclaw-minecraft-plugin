@@ -85,9 +85,10 @@ function getNearbyHostiles(bot) {
 function getNearbyBlocks(bot) {
   const counts = {};
   const pos = bot.entity.position.floored();
-  for (let dx = -4; dx <= 4; dx++) {
-    for (let dy = -2; dy <= 2; dy++) {
-      for (let dz = -4; dz <= 4; dz++) {
+  // Scan 16x8x16 area (8 blocks horizontal, 4 up/down)
+  for (let dx = -8; dx <= 8; dx++) {
+    for (let dy = -4; dy <= 4; dy++) {
+      for (let dz = -8; dz <= 8; dz++) {
         try {
           const block = bot.blockAt(pos.offset(dx, dy, dz));
           if (block && block.name !== 'air' && block.name !== 'cave_air') {
@@ -98,6 +99,15 @@ function getNearbyBlocks(bot) {
     }
   }
   return counts;
+}
+
+function getLightLevel(bot) {
+  try {
+    const block = bot.blockAt(bot.entity.position.floored());
+    return block ? block.light : 0;
+  } catch (e) {
+    return 0;
+  }
 }
 
 function getInventory(bot) {
@@ -132,6 +142,7 @@ module.exports = {
   getNearbyEntities,
   getNearbyHostiles,
   getNearbyBlocks,
+  getLightLevel,
   getInventory,
   getTimePhase,
   countInventoryItem,

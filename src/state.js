@@ -1,6 +1,6 @@
 const { STATE_FILE } = require('./config');
 const { safeWrite } = require('./events');
-const { getNearbyPlayers, getNearbyEntities, getNearbyBlocks, getInventory, getTimePhase } = require('./perception');
+const { getNearbyPlayers, getNearbyEntities, getNearbyBlocks, getLightLevel, getInventory, getTimePhase } = require('./perception');
 
 let currentAction = null;
 let lastHealth = null;
@@ -45,7 +45,8 @@ function buildState(bot) {
   let biome = 'unknown';
   try {
     const block = bot.blockAt(pos.floored());
-    biome = block?.biome?.name || block?.biome?.toString?.() || 'unknown';
+    const b = block?.biome;
+    biome = typeof b === 'string' ? b : (b?.name || b?.displayName || 'unknown');
   } catch (e) {}
   const weather = bot.isRaining ? (bot.thunderState ? 'thunder' : 'rain') : 'clear';
 
@@ -65,6 +66,7 @@ function buildState(bot) {
       gameMode: bot.game.gameMode,
       biome,
       weather,
+      lightLevel: getLightLevel(bot),
     },
     inventory: getInventory(bot),
     nearbyEntities: deduplicateEntities([

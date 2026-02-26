@@ -6,6 +6,9 @@ let escaping = false;
 let fleeing = false;
 let fleeTimeout = null;
 let savedGoal = null;
+let lastPos = null;
+let stuckTicks = 0;
+const STUCK_THRESHOLD = 5; // 5 ticks * 2s = 10s without moving
 
 function canSeeEntity(bot, entity) {
   // Quick line-of-sight check using mineflayer's built-in method
@@ -18,8 +21,8 @@ function canSeeEntity(bot, entity) {
 }
 
 // Distances at which the bot reacts to threats
-const CREEPER_FLEE_DIST = 12; // creepers explode at ~3 blocks, give wide berth
-const HOSTILE_FLEE_DIST = 8;  // melee mobs
+const CREEPER_FLEE_DIST = 16; // creepers explode at ~3 blocks, give very wide berth
+const HOSTILE_FLEE_DIST = 12; // melee mobs - need margin for tick interval
 const FLEE_DURATION_MS = 4000;
 
 async function autoEat(bot) {
@@ -176,9 +179,34 @@ function smartSprint(bot) {
   bot.setControlState('sprint', dist > 8 && bot.food > 6);
 }
 
+function checkStuck(bot) {
+  const action = require('./state').getCurrentAction();
+  if (!action) {
+    stuckTicks = 0;
+    lastPos = null;
+    return;
+  }
+
+  const pos = bot.entity.position;
+  if (lastPos && pos.distanceTo(lastPos) < 0.5) {
+    stuckTicks++;
+    if (stuckTicks >= STUCK_THRESHOLD) {
+      logEvent('stuck', { position: pos.floored(), action, ticks: stuckTicks });
+      bot.pathfinder.setGoal(null);
+      require('./state').clearCurrentAction();
+      stuckTicks = 0;
+      lastPos = null;
+    }
+  } else {
+    stuckTicks = 0;
+  }
+  lastPos = pos.clone();
+}
+
 async function survivalTick(bot) {
   escapeWater(bot);
   checkThreats(bot);
+  checkStuck(bot);
   smartSprint(bot);
   if (bot.food < 6) {
     await autoEat(bot);

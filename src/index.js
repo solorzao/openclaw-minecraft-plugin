@@ -34,7 +34,7 @@ console.log(`  Server: ${botConfig.host}:${botConfig.port}`);
 console.log(`  Username: ${botConfig.username}`);
 console.log(`  Data: ${config.DATA_DIR}`);
 
-const RECONNECT_DELAY_MS = 5000;
+const RECONNECT_DELAY_MS = 15000;
 let intervals = [];
 let bot = null;
 let reconnecting = false;

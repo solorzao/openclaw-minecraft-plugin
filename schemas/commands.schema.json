@@ -23,7 +23,7 @@
           "chat", "equip", "eat", "sleep", "activate", "fish", "use_on", "trade", "brew", "enchant",
           "store_items", "retrieve_items", "manage_inventory",
           "scan", "find_blocks", "where_am_i", "list_recipes", "goto_block",
-          "verify", "cancel", "inspect_container", "set_note", "get_notes",
+          "verify", "cancel", "inspect_container", "set_note", "get_notes", "ack_events",
           "goal"
         ],
         "description": "Action to execute"
@@ -371,6 +371,15 @@
           "properties": {
             "key": { "type": "string", "description": "Specific note key to retrieve. If omitted, returns all notes." }
           }
+        }
+      },
+      {
+        "if": { "properties": { "action": { "const": "ack_events" } } },
+        "then": {
+          "properties": {
+            "eventId": { "type": "integer", "minimum": 0, "description": "Highest event ID you have processed. Events with id <= this will be considered handled." }
+          },
+          "required": ["action", "eventId"]
         }
       },
       {

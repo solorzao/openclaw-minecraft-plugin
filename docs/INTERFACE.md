@@ -97,7 +97,9 @@ Written every second to `data/state.json`. This is the primary way to observe th
   "combat": null,
   "notes": {
     "base_location": { "value": "100 64 200", "updatedAt": "2026-02-25T19:00:00.000Z" }
-  }
+  },
+  "latestEventId": 157,
+  "lastAckedEventId": 150
 }
 ```
 
@@ -136,6 +138,8 @@ Written every second to `data/state.json`. This is the primary way to observe th
 | `survival` | Survival system state: `isFleeing`, `isEscapingWater`, `isStuck`, `nearestThreat`, `fleeInfo` |
 | `combat` | Active combat info: `target`, `targetHealth`, `hitsDealt`, `damageTaken`, `elapsed`. Null if not fighting |
 | `notes` | Agent-saved persistent notes (key-value pairs saved via `set_note` command) |
+| `latestEventId` | Highest event ID currently in `events.json`. Use to know what's new |
+| `lastAckedEventId` | Last event ID acknowledged via `ack_events`. Null if never acked. Persists across bot restarts |
 
 ---
 
@@ -509,6 +513,12 @@ Notes are saved to `data/notes.json` and appear in `state.json` under the `notes
 { "action": "get_notes", "key": "base_location" }
 ```
 Returns all notes or a specific note by key.
+
+#### `ack_events` - Acknowledge processed events (persists across restarts)
+```json
+{ "action": "ack_events", "eventId": 150 }
+```
+Tells the bot "I have processed all events up to this ID." The bot saves this to `data/ack.json`, and `state.json` will include `lastAckedEventId: 150` on every update. **On startup, read `lastAckedEventId` from `state.json` and only process events with `id` greater than that value.** This prevents duplicate responses when your agent restarts.
 
 ### Goals
 

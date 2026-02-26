@@ -1,5 +1,5 @@
 const { STATE_FILE } = require('./config');
-const { safeWrite } = require('./events');
+const { safeWrite, getLatestEventId } = require('./events');
 const {
   getNearbyPlayers, getNearbyEntities, getNearbyBlocks, getNotableBlocks,
   getLightLevel, getInventory, getEquipment, getArmorRating, getInventoryStats,
@@ -14,10 +14,12 @@ const NOTES_FILE = path.join(DATA_DIR, 'notes.json');
 // Lazy-loaded to avoid circular dependency (survival requires state)
 let _getSurvivalState = null;
 let _getCombatState = null;
+let _loadAck = null;
 function lazyLoadModules() {
   if (!_getSurvivalState) {
     _getSurvivalState = require('./survival').getSurvivalState;
     _getCombatState = require('./handlers/combat').getCombatState;
+    _loadAck = require('./handlers/utility').loadAck;
   }
 }
 
@@ -150,6 +152,8 @@ function buildState(bot) {
     survival: survivalState,
     combat: combatInfo,
     notes: loadNotes(),
+    latestEventId: getLatestEventId(),
+    lastAckedEventId: _loadAck ? _loadAck().lastAckedEventId : null,
   };
 }
 

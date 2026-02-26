@@ -37,4 +37,8 @@ function loadEvents() {
   }
 }
 
-module.exports = { logEvent, loadEvents, safeWrite };
+function getLatestEventId() {
+  return eventIdCounter;
+}
+
+module.exports = { logEvent, loadEvents, safeWrite, getLatestEventId };

@@ -112,14 +112,16 @@ Check `state.json` every 1-2 seconds. Act on the **first** matching condition:
 | `inspect_container` | `{"action":"inspect_container"}` | Look inside nearest chest |
 | `set_note` | `{"action":"set_note","key":"base","value":"100 64 -50"}` | Save persistent note |
 | `get_notes` | `{"action":"get_notes"}` | Retrieve all saved notes |
+| `ack_events` | `{"action":"ack_events","eventId":150}` | **Mark events as processed (survives restarts)** |
 
 ### Key Patterns for Smart LLM Control
 
 1. **Verify before acting**: Use `verify` before `craft`/`smelt`/`mine` to check feasibility and see what's missing
-2. **Check state.survival**: Before issuing movement, check if bot is fleeing or stuck
-3. **Use cancel**: If you need to change plans mid-action, cancel first
-4. **Save notes**: Use `set_note` to remember base location, goals, and progress across sessions
-5. **Read structured results**: `command_result` events now include rich data (missing materials, items gained, trade lists, etc.)
+2. **Track events with ack_events**: On startup, read `lastAckedEventId` from `state.json` and only process events with `id` above that. After processing, send `ack_events` with the highest ID. **This prevents duplicate responses on restart.**
+3. **Check state.survival**: Before issuing movement, check if bot is fleeing or stuck
+4. **Use cancel**: If you need to change plans mid-action, cancel first
+5. **Save notes**: Use `set_note` to remember base location, goals, and progress across sessions
+6. **Read structured results**: `command_result` events now include rich data (missing materials, items gained, trade lists, etc.)
 
 ### Resource Names for mine_resource
 
@@ -272,6 +274,10 @@ state.inventoryStats.freeSlots → < 3 = nearly full
 state.nearbyEntities    → check for hostiles (type="hostile")
 state.notableBlocks     → chests, ores, workstations nearby
 state.currentAction     → null = idle, non-null = busy
+state.latestEventId     → highest event ID right now
+state.lastAckedEventId  → last ID you acked (null if never)
 ```
 
 **Rule of thumb:** If `currentAction` is not null, the bot is doing something. Don't send conflicting commands unless you want to cancel it.
+
+**On startup:** Only process events with `id > lastAckedEventId` (or `id > latestEventId` if never acked). Send `ack_events` after processing each batch.

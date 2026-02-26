@@ -566,4 +566,29 @@ async function listRecipesDetailed(bot, cmd) {
   }
 }
 
-module.exports = { scan, findBlocks, whereAmI, listRecipes: listRecipesDetailed, gotoNearestBlock, verify, cancel, inspectContainer, setNote, getNotes };
+// Event acknowledgment - persists across agent restarts
+const ACK_FILE = path.join(DATA_DIR, 'ack.json');
+
+function loadAck() {
+  try {
+    if (fs.existsSync(ACK_FILE)) return JSON.parse(fs.readFileSync(ACK_FILE, 'utf8'));
+  } catch (e) {}
+  return { lastAckedEventId: null };
+}
+
+function saveAck(ack) {
+  try { fs.writeFileSync(ACK_FILE, JSON.stringify(ack, null, 2)); } catch (e) {}
+}
+
+async function ackEvents(bot, cmd) {
+  const eventId = cmd.eventId;
+  if (eventId === undefined || eventId === null) {
+    logEvent('command_result', { commandId: cmd.id, success: false, detail: 'eventId is required' });
+    return;
+  }
+  const ack = { lastAckedEventId: eventId, updatedAt: new Date().toISOString() };
+  saveAck(ack);
+  logEvent('command_result', { commandId: cmd.id, success: true, detail: `Acknowledged events up to ${eventId}` });
+}
+
+module.exports = { scan, findBlocks, whereAmI, listRecipes: listRecipesDetailed, gotoNearestBlock, verify, cancel, inspectContainer, setNote, getNotes, ackEvents, loadAck };

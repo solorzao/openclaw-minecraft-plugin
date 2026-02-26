@@ -80,6 +80,7 @@ const DISPATCH = {
   inspect_container:   utility.inspectContainer,
   set_note:            utility.setNote,
   get_notes:           utility.getNotes,
+  ack_events:          utility.ackEvents,
 
   // Goal shortcuts
   goal: async (bot, cmd) => {

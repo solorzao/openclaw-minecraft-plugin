@@ -114,6 +114,8 @@ Key fields to check every cycle:
 | `notableBlocks` | Chests, ores, workstations with positions |
 | `currentAction` | What the bot is doing right now (null = idle) |
 | `survival.isFleeing` | Bot is running from a threat |
+| `latestEventId` | Highest event ID in events.json right now |
+| `lastAckedEventId` | Last event ID you acknowledged (null if never acked) |
 
 Full state schema with all fields: [docs/INTERFACE.md#state](docs/INTERFACE.md).
 
@@ -133,6 +135,20 @@ Events you should watch for:
 | `combat_ended` | Fight over (`reason`, `target`, `hitsDealt`) |
 
 Full event reference: [docs/INTERFACE.md#events](docs/INTERFACE.md).
+
+### Tracking Events (Don't Reprocess Old Events)
+
+**On startup**, read `state.json` and note `latestEventId`. Only process events with `id` greater than that value. This prevents responding to old chat messages or events that happened before your session started.
+
+**After processing a batch of events**, acknowledge the highest ID so it persists across restarts:
+
+```json
+[{"id": "ack-1", "action": "ack_events", "eventId": 150}]
+```
+
+The bot saves this to disk. On your next startup, `state.json` will include `lastAckedEventId: 150` — skip all events with `id <= 150`.
+
+**Without this, restarting your agent will re-trigger responses to every event still in the buffer.**
 
 ---
 

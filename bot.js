@@ -1,20 +1,33 @@
 const mineflayer = require('mineflayer');
 const fs = require('fs');
+const path = require('path');
 const Vec3 = require('vec3');
 
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder');
 const { GoalFollow, GoalBlock, GoalNear, GoalXZ } = goals;
 
-const EVENTS_FILE = '/data/minecraft-bot/events.json';
-const COMMANDS_FILE = '/data/minecraft-bot/commands.json';
-const WORLD_MEMORY_FILE = '/data/minecraft-bot/world-memory.json';
-const STATE_FILE = '/data/minecraft-bot/state.json';
+// Configure data directory (defaults to ./data/ in repo root)
+const DATA_DIR = process.env.BOT_DATA_DIR || path.join(__dirname, 'data');
+const EVENTS_FILE = path.join(DATA_DIR, 'events.json');
+const COMMANDS_FILE = path.join(DATA_DIR, 'commands.json');
+const WORLD_MEMORY_FILE = path.join(DATA_DIR, 'world-memory.json');
+const STATE_FILE = path.join(DATA_DIR, 'state.json');
+const RESPONSES_FILE = path.join(DATA_DIR, 'responses.json');
+
+// ==========================================
+// INITIALIZATION
+// ==========================================
+
+// Ensure data directory exists
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
 
 // ==========================================
 // SOUL.md INTEGRATION - Personality & Values
 // ==========================================
 
-const SOUL_FILE = process.env.SOUL_PATH || '/data/.openclaw/workspace/SOUL.md';
+const SOUL_FILE = process.env.SOUL_PATH || path.join(__dirname, 'SOUL.md');
 
 let soul = {
   persona: null,

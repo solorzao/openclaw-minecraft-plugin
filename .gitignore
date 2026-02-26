@@ -27,3 +27,9 @@ test-*.json
 
 # Environment variables (contains sensitive config)
 .env
+.env.local
+
+# Bot data files (runtime state, stored locally)
+data/
+state.json
+responses.json

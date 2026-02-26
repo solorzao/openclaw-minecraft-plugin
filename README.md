@@ -9,20 +9,33 @@ An autonomous social AI bot built on [Mineflayer](https://github.com/PrismarineJ
 ## ⚡ Quick Deploy
 
 ```bash
+# 1. Clone the repo
 git clone https://github.com/solorzao/openclaw-minecraft-plugin.git
 cd openclaw-minecraft-plugin
+
+# 2. Install dependencies
 npm install
 
-# Configure your bot (REQUIRED - no hardcoding!)
-export BOT_USERNAME=Nova_AI        # Your bot's name
-export MC_HOST=your.server.com     # Your Minecraft server
-export MC_PORT=25565               # Server port
+# 3. Configure (copy example and edit with YOUR server details)
+cp .env.example .env
+# Edit .env: BOT_USERNAME, MC_HOST, MC_PORT
 
-# Start the bot
-node bot.js
+# 4. Start the bot
+./start-bot.sh
 ```
 
-The bot operates autonomously - no commands needed. Just deploy and observe!
+**That's it!** The bot operates autonomously - no commands needed. Just deploy and observe!
+
+### Configuration (.env)
+
+Required settings:
+- `BOT_USERNAME` - Name of your bot in Minecraft
+- `MC_HOST` - Your Minecraft server address  
+- `MC_PORT` - Your Minecraft server port (default 25565)
+
+Optional settings:
+- `BOT_DATA_DIR` - Where bot stores state (default: `./data/`)
+- `SOUL_PATH` - Path to personality file (default: `./SOUL.md`)
 
 📖 **New to this bot?** See the [**New Agent Deployment Guide**](docs/NEW-AGENT-GUIDE.md) for step-by-step setup.
 

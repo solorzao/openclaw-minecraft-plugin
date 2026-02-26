@@ -2,43 +2,58 @@
 
 /**
  * Basic Minecraft Bot Controller
- * 
- * Reads events.json from the bot and writes commands.json to control it.
+ *
+ * Reads state.json and events.json from the bot and writes commands.json to control it.
  * Implements simple survival logic: health, hunger, combat, social, exploration.
- * 
+ *
  * Usage:
  *   node basic-controller.js
- * 
+ *
  * Requirements:
- *   - bot.js running in parent directory
- *   - events.json and commands.json in parent directory
+ *   - Bot running (npm start) with data/ directory created
  */
 
 const fs = require('fs');
 const path = require('path');
 
 // Configuration
-const EVENTS_FILE = path.join(__dirname, '..', 'events.json');
-const COMMANDS_FILE = path.join(__dirname, '..', 'commands.json');
-const CHECK_INTERVAL = 10000;  // Check every 10 seconds
+const DATA_DIR = process.env.BOT_DATA_DIR || path.join(__dirname, '..', 'data');
+const STATE_FILE = path.join(DATA_DIR, 'state.json');
+const EVENTS_FILE = path.join(DATA_DIR, 'events.json');
+const COMMANDS_FILE = path.join(DATA_DIR, 'commands.json');
+const CHECK_INTERVAL = 5000;  // Check every 5 seconds
 
 // State tracking
-let lastCommandTime = 0;
+let commandCounter = 0;
 let consecutiveErrors = 0;
 
+function nextId() {
+  return `ctrl-${++commandCounter}`;
+}
+
 /**
- * Read latest events from bot
+ * Read current bot state
+ */
+function readState() {
+  try {
+    const data = fs.readFileSync(STATE_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      consecutiveErrors++;
+    }
+    return null;
+  }
+}
+
+/**
+ * Read recent events (for command results, chat, etc.)
  */
 function readEvents() {
   try {
     const data = fs.readFileSync(EVENTS_FILE, 'utf8');
-    const events = JSON.parse(data);
-    return events;
-  } catch (err) {
-    if (err.code !== 'ENOENT') {
-      console.error('❌ Failed to read events:', err.message);
-      consecutiveErrors++;
-    }
+    return JSON.parse(data);
+  } catch {
     return [];
   }
 }
@@ -48,12 +63,13 @@ function readEvents() {
  */
 function writeCommands(commands) {
   try {
-    fs.writeFileSync(COMMANDS_FILE, JSON.stringify(commands, null, 2));
-    lastCommandTime = Date.now();
+    // Add IDs to commands that don't have them
+    const withIds = commands.map(cmd => cmd.id ? cmd : { id: nextId(), ...cmd });
+    fs.writeFileSync(COMMANDS_FILE, JSON.stringify(withIds, null, 2));
     consecutiveErrors = 0;
     return true;
   } catch (err) {
-    console.error('❌ Failed to write commands:', err.message);
+    console.error('Failed to write commands:', err.message);
     consecutiveErrors++;
     return false;
   }
@@ -62,87 +78,64 @@ function writeCommands(commands) {
 /**
  * Decide what the bot should do based on current state
  */
-function decide(perception) {
-  const {
-    health,
-    food,
-    hungerUrgency,
-    hostileMobs,
-    nearbyPlayers,
-    dangerUnderfoot,
-    inWater,
-    oxygen,
-    position,
-    currentGoal
-  } = perception.data;
+function decide(state) {
+  const { bot, inventory, nearbyEntities, time } = state;
 
-  // Priority 1: IMMEDIATE DANGER
-  if (health < 6) {
-    console.log('🚨 CRITICAL: Low health! Stopping and retreating.');
-    return [
-      { action: 'stop' },
-      { action: 'chat', message: 'Help! Low health!' }
-    ];
-  }
-
-  if (dangerUnderfoot) {
-    console.log(`⚠️  DANGER: ${dangerUnderfoot} detected! Moving to safety.`);
+  // Priority 1: CRITICAL HEALTH
+  if (bot.health < 6) {
+    console.log('CRITICAL: Low health! Stopping.');
     return [{ action: 'stop' }];
   }
 
-  if (inWater && oxygen < 100) {
-    console.log('💧 DROWNING: Low oxygen! Swimming up.');
-    // Bot auto-swims at oxygen < 50, but we can help
+  // Priority 2: IN WATER
+  if (bot.isInWater) {
+    console.log('WARNING: In water! Jumping.');
     return [{ action: 'jump' }];
   }
 
-  // Priority 2: HUNGER
-  if (hungerUrgency === 'critical' || food < 6) {
-    console.log('🍖 HUNGRY: Finding food...');
-    
-    // If we have food, eat it
-    if (perception.data.foodCount > 0) {
+  // Priority 3: HUNGER
+  if (bot.food < 6) {
+    const hasFood = inventory.some(i =>
+      ['cooked_beef', 'cooked_porkchop', 'bread', 'apple', 'baked_potato'].includes(i.name));
+
+    if (hasFood) {
+      console.log('HUNGRY: Eating food...');
       return [{ action: 'eat' }];
-    }
-    
-    // Otherwise hunt
-    return [{ action: 'find_food' }];
-  }
-
-  if (hungerUrgency === 'high' && food < 12) {
-    console.log('🍗 Moderate hunger. Looking for food...');
-    return [{ action: 'find_food' }];
-  }
-
-  // Priority 3: COMBAT
-  if (hostileMobs.length > 0 && health > 10) {
-    const nearest = hostileMobs[0];
-    console.log(`⚔️  COMBAT: ${nearest.type} at ${nearest.distance}m - Engaging!`);
-    
-    if (nearest.distance < 30) {
-      return [{ action: 'attack', target: nearest.type }];
+    } else {
+      console.log('HUNGRY: Finding food...');
+      return [{ action: 'find_food' }];
     }
   }
 
-  // Priority 4: SOCIAL (follow player)
-  if (nearbyPlayers.length > 0) {
-    const player = nearbyPlayers[0];
-    
-    // If player is far, follow them
+  // Priority 4: COMBAT
+  const hostiles = nearbyEntities.filter(e => e.type === 'hostile');
+  if (hostiles.length > 0 && bot.health > 10) {
+    const nearest = hostiles[0];
+    console.log(`COMBAT: ${nearest.name} at ${nearest.distance}m - Engaging!`);
+    return [{ action: 'attack', target: nearest.name }];
+  }
+
+  // Priority 5: NIGHT - try to sleep
+  if (time.phase === 'night') {
+    console.log('NIGHT: Trying to sleep...');
+    return [{ action: 'sleep' }];
+  }
+
+  // Priority 6: SOCIAL (follow nearby player)
+  const players = nearbyEntities.filter(e => e.type === 'player');
+  if (players.length > 0) {
+    const player = players[0];
     if (player.distance > 5) {
-      console.log(`👥 SOCIAL: Following ${player.username} (${player.distance}m away)`);
-      return [{ action: 'follow', username: player.username, distance: 3 }];
+      console.log(`SOCIAL: Following ${player.name} (${player.distance}m away)`);
+      return [{ action: 'follow', username: player.name, distance: 3 }];
     }
-    
-    // If close to player and idle, we're good
-    if (!currentGoal || currentGoal.type === 'follow') {
-      console.log(`✅ SOCIAL: Near ${player.username}, standing by.`);
-      return [];  // No commands needed
-    }
+    // Already close, stand by
+    console.log(`SOCIAL: Near ${player.name}, standing by.`);
+    return [];
   }
 
-  // Priority 5: AUTONOMOUS BEHAVIOR
-  console.log('🌍 AUTONOMOUS: Exploring world...');
+  // Priority 7: EXPLORE
+  console.log('IDLE: Exploring...');
   return [{ action: 'goal', goal: 'explore' }];
 }
 
@@ -150,42 +143,32 @@ function decide(perception) {
  * Main control loop
  */
 function controlLoop() {
-  const events = readEvents();
-  
-  if (events.length === 0) {
-    console.log('⏳ Waiting for bot to start...');
-    return;
-  }
+  const state = readState();
 
-  // Find latest perception event
-  const perception = events.reverse().find(e => e.type === 'perception');
-  
-  if (!perception) {
-    console.log('⏳ Waiting for perception data...');
+  if (!state) {
+    console.log('Waiting for bot to start...');
     return;
   }
 
   // Status display
-  const { health, food, position, hungerUrgency } = perception.data;
-  console.log('─'.repeat(60));
-  console.log(`📊 Status: HP=${health.toFixed(1)}/20 | Food=${food}/20 | Hunger=${hungerUrgency}`);
-  console.log(`📍 Position: (${position.x}, ${position.y}, ${position.z})`);
-  console.log(`⏰ Time: ${new Date().toLocaleTimeString()}`);
+  const { bot, time } = state;
+  console.log('-'.repeat(50));
+  console.log(`Status: HP=${bot.health.toFixed(1)}/20 | Food=${bot.food}/20 | ${time.phase}`);
+  console.log(`Position: (${bot.position.x}, ${bot.position.y}, ${bot.position.z})`);
 
   // Decide actions
-  const commands = decide(perception);
-  
+  const commands = decide(state);
+
   if (commands.length > 0) {
-    console.log(`🎮 Commands: ${commands.map(c => c.action).join(', ')}`);
+    console.log(`Commands: ${commands.map(c => c.action).join(', ')}`);
     writeCommands(commands);
   } else {
-    console.log('✨ No action needed');
+    console.log('No action needed');
   }
 
   // Health check
   if (consecutiveErrors > 5) {
-    console.error('💥 Too many errors! Check if bot is running.');
-    console.error('   Run: ps aux | grep bot.js');
+    console.error('Too many errors! Check if bot is running.');
     process.exit(1);
   }
 }
@@ -194,28 +177,29 @@ function controlLoop() {
  * Start controller
  */
 function main() {
-  console.log('🤖 Minecraft Bot Controller');
-  console.log('════════════════════════════════════════════════════════════');
-  console.log(`📂 Events:   ${EVENTS_FILE}`);
-  console.log(`📝 Commands: ${COMMANDS_FILE}`);
-  console.log(`⏱️  Interval: ${CHECK_INTERVAL}ms`);
-  console.log('════════════════════════════════════════════════════════════');
+  console.log('Minecraft Bot Controller');
+  console.log('==================================================');
+  console.log(`State:    ${STATE_FILE}`);
+  console.log(`Events:   ${EVENTS_FILE}`);
+  console.log(`Commands: ${COMMANDS_FILE}`);
+  console.log(`Interval: ${CHECK_INTERVAL}ms`);
+  console.log('==================================================');
   console.log('');
-  
-  // Check if files exist
-  if (!fs.existsSync(EVENTS_FILE)) {
-    console.warn('⚠️  events.json not found. Waiting for bot to start...');
+
+  // Check if data dir exists
+  if (!fs.existsSync(DATA_DIR)) {
+    console.warn('data/ directory not found. Waiting for bot to start...');
   }
-  
+
   // Initial run
   controlLoop();
-  
+
   // Continuous monitoring
   setInterval(controlLoop, CHECK_INTERVAL);
-  
+
   // Graceful shutdown
   process.on('SIGINT', () => {
-    console.log('\n\n👋 Controller shutting down...');
+    console.log('\nController shutting down...');
     process.exit(0);
   });
 }

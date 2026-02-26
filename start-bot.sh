@@ -1,6 +1,6 @@
 #!/bin/bash
 # OpenClaw Minecraft Bot Launcher
-# 
+#
 # Usage:
 #   ./start-bot.sh          # Uses .env file
 #   ./start-bot.sh -h       # Show this help
@@ -40,7 +40,7 @@ fi
 
 # Check if .env exists
 if [ ! -f "$SCRIPT_DIR/.env" ]; then
-  echo -e "${RED}❌ Error: .env file not found${NC}"
+  echo -e "${RED}Error: .env file not found${NC}"
   echo ""
   echo "Setup instructions:"
   echo "  1. Copy the example config:"
@@ -59,7 +59,7 @@ fi
 
 # Check if node_modules exist
 if [ ! -d "$SCRIPT_DIR/node_modules" ]; then
-  echo -e "${YELLOW}⚠️  Dependencies not installed. Running npm install...${NC}"
+  echo -e "${YELLOW}Dependencies not installed. Running npm install...${NC}"
   cd "$SCRIPT_DIR"
   npm install
   echo ""
@@ -70,7 +70,7 @@ export $(grep -v '^#' "$SCRIPT_DIR/.env" | xargs)
 
 # Validate required settings
 if [ -z "$BOT_USERNAME" ] || [ -z "$MC_HOST" ] || [ -z "$MC_PORT" ]; then
-  echo -e "${RED}❌ Error: Missing required settings in .env${NC}"
+  echo -e "${RED}Error: Missing required settings in .env${NC}"
   echo ""
   echo "Required settings:"
   echo "  BOT_USERNAME - Your bot's name"
@@ -81,7 +81,7 @@ if [ -z "$BOT_USERNAME" ] || [ -z "$MC_HOST" ] || [ -z "$MC_PORT" ]; then
 fi
 
 # Show startup info
-echo -e "${GREEN}🚀 Starting OpenClaw Minecraft Bot${NC}"
+echo -e "${GREEN}Starting OpenClaw Minecraft Bot${NC}"
 echo ""
 echo "Configuration:"
 echo "  Bot Name:        $BOT_USERNAME"
@@ -89,13 +89,10 @@ echo "  Server:          $MC_HOST:$MC_PORT"
 if [ -n "$BOT_DATA_DIR" ]; then
   echo "  Data Directory:  $BOT_DATA_DIR"
 fi
-if [ -n "$SOUL_PATH" ]; then
-  echo "  Personality:     $SOUL_PATH"
-fi
 echo ""
 echo "Press Ctrl+C to stop"
 echo ""
 
 # Start the bot
 cd "$SCRIPT_DIR"
-node bot.js
+node src/index.js

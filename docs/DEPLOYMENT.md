@@ -5,23 +5,23 @@
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                     OpenClaw Agent                       │
-│  ┌──────────────┐    ┌──────────────┐   ┌────────────┐ │
-│  │ Main Session │    │  Sub-Agent   │   │  Cron Job  │ │
-│  │  (Discord)   │───>│ (Controller) │<─>│(Heartbeat) │ │
-│  └──────────────┘    └──────┬───────┘   └────────────┘ │
-└─────────────────────────────│─────────────────────────┘
-                              │
++---------------------------------------------------------+
+|                     OpenClaw Agent                       |
+|  +--------------+    +--------------+   +------------+  |
+|  | Main Session |    |  Sub-Agent   |   |  Cron Job  |  |
+|  |  (Discord)   |--->| (Controller) |<->|(Heartbeat) |  |
+|  +--------------+    +------+-------+   +------------+  |
++-----------------------------|---------------------------+
+                              |
                     file-based communication
-                              │
-           ┌──────────────────┴──────────────────┐
-           ▼                                      ▼
-      events.json                           commands.json
-           │                                      │
-           └────────────> bot.js <───────────────┘
-                              │
-                              ▼
+                              |
+           +------------------+------------------+
+           v                  v                  v
+      state.json         events.json       commands.json
+           |                  |                  |
+           +--------> src/index.js <-------------+
+                              |
+                              v
                       Minecraft Server
 ```
 
@@ -39,10 +39,10 @@ npm install
 npm start &  # Run in background
 ```
 
-Bot will create:
-- `events.json` - Updated every 3 seconds
-- `commands.json` - Read every 750ms
-- `world-memory.json` - Persistent landmarks
+Bot will create in `data/`:
+- `state.json` - Updated every 1 second
+- `events.json` - Rolling event log
+- `commands.json` - Read every 500ms
 
 ### Step 2: Spawn Controller Agent
 
@@ -53,30 +53,29 @@ sessions_spawn({
   task: `You control a Minecraft bot via file-based commands.
 
 **Your Files:**
-- Read: /path/to/openclaw-minecraft-plugin/events.json (bot state)
-- Write: /path/to/openclaw-minecraft-plugin/commands.json (actions)
+- Read: /path/to/openclaw-minecraft-plugin/data/state.json (bot state, updated every 1s)
+- Read: /path/to/openclaw-minecraft-plugin/data/events.json (game events, command results)
+- Write: /path/to/openclaw-minecraft-plugin/data/commands.json (actions)
 
 **Your Goal:** Keep the bot alive and help the player.
 
 **Priority Logic:**
-1. DANGER: health < 6 → retreat/hide
-2. HUNGER: food < 6 → find_food, cook_food, eat
-3. COMBAT: hostileMobs nearby + health > 10 → attack
-4. SOCIAL: player nearby → follow player
+1. DANGER: health < 6 -> stop, find safety
+2. HUNGER: food < 6 -> eat (if have food) or find_food
+3. COMBAT: hostile entities nearby + health > 10 -> attack
+4. SOCIAL: player nearby -> follow player
 5. IDLE: explore or gather resources
 
-**Example Commands:**
-- Follow player: {"action":"follow","username":"Wookiee_23","distance":2}
-- Find food: {"action":"find_food"}
-- Attack: {"action":"attack"}
-- Craft pickaxe: {"action":"craft","item":"wooden_pickaxe"}
+**Example Commands (include unique id for each):**
+- Follow player: {"id":"f1","action":"follow","username":"Wookiee_23","distance":2}
+- Find food: {"id":"f2","action":"find_food"}
+- Attack: {"id":"a1","action":"attack"}
+- Craft: {"id":"c1","action":"craft","item":"wooden_pickaxe"}
 
-Read events.json every 10 seconds, decide actions, write commands.json.
-Run monitoring loop continuously.`,
-  
+Read state.json every 5 seconds, decide actions, write commands.json.`,
+
   label: 'minecraft-bot-controller',
-  model: 'ollama/llama3.2',  // Local model for low cost
-  cleanup: 'keep'  // Keep session alive
+  cleanup: 'keep'
 });
 ```
 
@@ -86,11 +85,11 @@ Run monitoring loop continuously.`,
 // Check controller status
 sessions_list({ kinds: ['other'], messageLimit: 3 });
 
-// View latest commands
-exec('tail -20 /path/to/openclaw-minecraft-plugin/commands.json');
+// View bot state
+read_file('/path/to/openclaw-minecraft-plugin/data/state.json');
 
-// View bot events
-exec('tail -50 /path/to/openclaw-minecraft-plugin/events.json | grep perception | tail -5');
+// View recent command results
+read_file('/path/to/openclaw-minecraft-plugin/data/events.json');
 ```
 
 ---
@@ -99,8 +98,6 @@ exec('tail -50 /path/to/openclaw-minecraft-plugin/events.json | grep perception 
 
 Use OpenClaw's cron system for periodic checks.
 
-### Create Heartbeat Job
-
 ```javascript
 cron({
   action: 'add',
@@ -108,18 +105,14 @@ cron({
     name: 'Minecraft Bot Heartbeat',
     schedule: {
       kind: 'every',
-      everyMs: 30000,  // Every 30 seconds
+      everyMs: 30000,
       anchorMs: Date.now()
     },
     payload: {
       kind: 'agentTurn',
-      message: `Check Minecraft bot state and issue commands if needed.
-
-Read /path/to/openclaw-minecraft-plugin/events.json.
-If bot needs help (low health, low food, combat), write commands to commands.json.
-
+      message: `Check Minecraft bot state at /path/to/data/state.json.
+If bot needs help (low health, low food, combat), write commands to /path/to/data/commands.json.
 ONLY respond if action needed. Otherwise reply: HEARTBEAT_OK`,
-      model: 'ollama/llama3.2',
       timeoutSeconds: 20
     },
     sessionTarget: 'isolated',
@@ -132,91 +125,14 @@ ONLY respond if action needed. Otherwise reply: HEARTBEAT_OK`,
 
 ## Method 3: Custom Script
 
-Write a simple Node.js controller.
-
-### `controller.js`
-
-```javascript
-const fs = require('fs');
-const path = require('path');
-
-const EVENTS_FILE = path.join(__dirname, 'events.json');
-const COMMANDS_FILE = path.join(__dirname, 'commands.json');
-
-function readEvents() {
-  try {
-    return JSON.parse(fs.readFileSync(EVENTS_FILE, 'utf8'));
-  } catch {
-    return [];
-  }
-}
-
-function writeCommands(commands) {
-  fs.writeFileSync(COMMANDS_FILE, JSON.stringify(commands, null, 2));
-}
-
-function decide(perception) {
-  const { health, food, hungerUrgency, hostileMobs, nearbyPlayers } = perception.data;
-  
-  // Priority 1: Danger
-  if (health < 6) {
-    console.log('🚨 LOW HEALTH - Retreating!');
-    return [{ action: 'stop' }];
-  }
-  
-  // Priority 2: Hunger
-  if (hungerUrgency === 'critical' || food < 6) {
-    console.log('🍖 HUNGRY - Finding food...');
-    return [{ action: 'find_food' }];
-  }
-  
-  // Priority 3: Combat
-  if (hostileMobs.length > 0 && health > 10) {
-    const nearest = hostileMobs[0];
-    console.log(`⚔️  COMBAT - Attacking ${nearest.type}...`);
-    return [{ action: 'attack', target: nearest.type }];
-  }
-  
-  // Priority 4: Social
-  if (nearbyPlayers.length > 0) {
-    const player = nearbyPlayers[0];
-    if (player.distance > 3) {
-      console.log(`👥 SOCIAL - Following ${player.username}...`);
-      return [{ action: 'follow', username: player.username, distance: 2 }];
-    }
-  }
-  
-  // Priority 5: Idle
-  console.log('🌍 IDLE - Exploring...');
-  return [{ action: 'goal', goal: 'explore' }];
-}
-
-function main() {
-  console.log('🤖 Minecraft Bot Controller Started');
-  
-  setInterval(() => {
-    const events = readEvents();
-    if (events.length === 0) return;
-    
-    const latest = events[events.length - 1];
-    
-    if (latest.type === 'perception') {
-      const commands = decide(latest);
-      writeCommands(commands);
-      
-      const { health, food, position } = latest.data;
-      console.log(`📊 HP:${health} Food:${food} Pos:(${position.x},${position.y},${position.z})`);
-    }
-  }, 10000);  // Every 10 seconds
-}
-
-main();
-```
-
-### Run Controller
+See [`examples/basic-controller.js`](../examples/basic-controller.js) for a standalone Node.js controller.
 
 ```bash
-node controller.js &
+# Start bot
+npm start &
+
+# Start controller
+node examples/basic-controller.js
 ```
 
 ---
@@ -225,20 +141,21 @@ node controller.js &
 
 ### Pattern 1: Manual Control via Discord
 
-User says in Discord: `"nova, mine some coal"`
+User says: `"mine some coal"`
 
 OpenClaw agent:
-1. Parses intent: mine coal
-2. Writes command: `{"action":"mine_resource","resource":"coal","count":10}`
-3. Bot executes and reports back via events
+1. Reads `state.json` to check bot status
+2. Writes: `[{"id":"mine-1","action":"mine_resource","resource":"coal_ore","count":10}]`
+3. Monitors `events.json` for `command_result` with `commandId: "mine-1"`
+4. Reports result back to user
 
 ### Pattern 2: Autonomous Survival
 
-Sub-agent monitors events continuously:
-- `food < 6` → find_food
-- `health < 10` → retreat to safety
-- `nightfall` → find bed, sleep
-- `player nearby` → follow and assist
+Sub-agent monitors `state.json` continuously:
+- `food < 6` -> eat or find_food
+- `health < 10` -> stop, retreat
+- `time.phase === "night"` -> sleep
+- `nearbyEntities` has hostiles -> attack or flee
 
 ### Pattern 3: Task Delegation
 
@@ -246,108 +163,26 @@ Main session delegates long tasks:
 
 ```javascript
 sessions_spawn({
-  task: 'Build a shelter at (-50, 64, 120) using cobblestone. Bot control files at /path/to/plugin/',
+  task: 'Build a shelter using the Minecraft bot. Files at /path/to/data/. Use build command with shelter_3x3 template.',
   label: 'build-shelter-task'
 });
 ```
 
-Sub-agent:
-1. Writes commands: goto → mine stone → craft → build
-2. Monitors progress via events
-3. Reports completion to main session
-
 ---
 
-## Advanced: Multi-Bot Coordination
+## Multi-Bot Setup
 
-Run multiple bots with unique file sets:
+Run multiple bots with separate data directories:
 
 ```bash
 # Bot 1: Miner
-node bot.js --name Miner_AI --events miner-events.json --commands miner-commands.json &
+BOT_USERNAME=Miner_AI BOT_DATA_DIR=./data-miner npm start &
 
 # Bot 2: Builder
-node bot.js --name Builder_AI --events builder-events.json --commands builder-commands.json &
+BOT_USERNAME=Builder_AI BOT_DATA_DIR=./data-builder npm start &
 ```
 
-Controller coordinates:
-- Miner_AI gathers resources
-- Builder_AI constructs structures
-- Share via chest storage system
-
----
-
-## Debugging
-
-### Check Bot Status
-
-```bash
-# Is bot running?
-ps aux | grep bot.js
-
-# View recent events
-tail -50 events.json | jq '.[] | select(.type=="perception") | .data | {health, food, position}'
-
-# View command queue
-cat commands.json | jq
-
-# Bot logs
-tail -f bot-output.log
-```
-
-### Common Issues
-
-**Bot not responding:**
-- Check `commands.json` exists and is valid JSON
-- Verify bot process is running
-- Check Minecraft server connection
-
-**Bot stuck:**
-- Write `{"action":"stop"}` to reset
-- Check `currentGoal` in perception events
-- Bot may be pathfinding (wait for completion)
-
-**Bot dying:**
-- Controller not checking health/food
-- Increase monitoring frequency
-- Add priority logic (health > food > combat)
-
----
-
-## Performance Tips
-
-### Local Model for Controller
-
-Use Ollama for zero-cost operation:
-
-```javascript
-sessions_spawn({
-  model: 'ollama/llama3.2',  // ~3B params, fast, free
-  task: '...'
-});
-```
-
-### Batch Commands
-
-Write multiple commands at once:
-
-```json
-[
-  {"action":"goto","x":10,"y":64,"z":20},
-  {"action":"mine","resource":"coal"},
-  {"action":"goto_mark","name":"home"}
-]
-```
-
-Bot executes sequentially.
-
-### Reduce Event Polling
-
-Increase perception interval in `bot.js`:
-
-```javascript
-setInterval(updatePerception, 5000);  // Default: 3000ms
-```
+Each bot gets its own `state.json`, `events.json`, and `commands.json`.
 
 ---
 
@@ -366,7 +201,10 @@ After=network.target
 Type=simple
 User=minecraft
 WorkingDirectory=/opt/openclaw-minecraft-plugin
-ExecStart=/usr/bin/node bot.js
+Environment="BOT_USERNAME=MyBot_AI"
+Environment="MC_HOST=server.address.com"
+Environment="MC_PORT=25565"
+ExecStart=/usr/bin/node src/index.js
 Restart=always
 RestartSec=10
 
@@ -374,73 +212,61 @@ RestartSec=10
 WantedBy=multi-user.target
 ```
 
-Enable:
-
-```bash
-sudo systemctl enable minecraft-bot
-sudo systemctl start minecraft-bot
-sudo systemctl status minecraft-bot
-```
-
-### Docker Container
+### Docker
 
 ```dockerfile
 FROM node:18-alpine
-
 WORKDIR /app
 COPY package*.json ./
 RUN npm install --production
-
 COPY . .
-
-CMD ["node", "bot.js"]
+CMD ["node", "src/index.js"]
 ```
-
-Build & run:
 
 ```bash
 docker build -t minecraft-bot .
 docker run -d \
-  -v $(pwd)/events.json:/app/events.json \
-  -v $(pwd)/commands.json:/app/commands.json \
-  -v $(pwd)/world-memory.json:/app/world-memory.json \
+  -e BOT_USERNAME=MyBot_AI \
+  -e MC_HOST=server.address.com \
+  -v $(pwd)/data:/app/data \
   --name minecraft-bot \
   minecraft-bot
 ```
 
+Mount the `data/` directory so the agent can access IPC files from the host.
+
 ---
 
-## Security Considerations
-
-### File Permissions
+## Debugging
 
 ```bash
-chmod 600 events.json commands.json world-memory.json
-chown openclaw:openclaw *.json
+# Check if bot is running
+ps aux | grep "src/index.js"
+
+# View current state
+cat data/state.json | jq '.bot | {health, food, position}'
+
+# View recent events
+cat data/events.json | jq '.[-5:]'
+
+# Send a test command
+echo '[{"id":"test","action":"chat","message":"Hello!"}]' > data/commands.json
+
+# Check command result
+cat data/events.json | jq '.[] | select(.commandId=="test")'
 ```
 
-### Sandboxing
+### Common Issues
 
-Run bot with limited privileges:
+**Bot not responding to commands:**
+- Check `data/commands.json` exists and is valid JSON
+- Verify bot process is running
+- Bot polls every 500ms - wait a moment
 
-```bash
-sudo -u minecraft node bot.js
-```
+**Bot stuck pathfinding:**
+- Send `{"action":"stop"}` to reset
+- Check `state.json` `currentAction` field
 
-### Server Whitelist
-
-Enable Minecraft server whitelist to prevent unauthorized bots.
-
----
-
-**Next Steps:**
-1. Deploy bot + controller
-2. Test basic commands
-3. Implement priority logic
-4. Monitor and tune
-
-See [INTERFACE.md](INTERFACE.md) for complete command/event reference.
-
----
-
-**Last Updated:** 2026-02-08
+**Bot dying repeatedly:**
+- Controller not checking health/food frequently enough
+- Increase check frequency or add priority logic

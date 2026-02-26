@@ -1,617 +1,380 @@
 # OpenClaw Minecraft Bot Interface
 
-**File-Based Communication Protocol: `events.json` ↔ `commands.json`**
+**File-Based IPC: `state.json` + `events.json` + `commands.json`**
 
 ## Overview
 
-The bot communicates with AI agents through two JSON files:
+The bot communicates with AI agents through three JSON files in the `data/` directory:
 
-- **`events.json`** - Bot writes game state every 3 seconds (read by AI)
-- **`commands.json`** - AI writes actions to execute (read by bot)
+- **`state.json`** - Bot writes every 1 second (current world snapshot)
+- **`events.json`** - Bot appends game events (rolling buffer of 200)
+- **`commands.json`** - Agent writes actions for bot to execute (consumed on read)
 
-This design allows **any** AI agent (OpenClaw, custom scripts, etc.) to control the bot without code changes.
+All file writes use atomic write-to-temp-then-rename to prevent partial reads.
 
 ---
 
-## 📥 Events (Bot → AI)
+## State (Bot -> Agent)
 
-### Event Structure
-
-```json
-[
-  {
-    "timestamp": 1770592450869,
-    "type": "perception",
-    "data": { /* event-specific data */ }
-  }
-]
-```
-
-### Core Events
-
-#### `perception` (every 3 seconds)
-
-Full game state snapshot:
+Written every second to `data/state.json`. This is the primary way to observe the bot.
 
 ```json
 {
-  "timestamp": 1770592450869,
-  "type": "perception",
-  "data": {
+  "timestamp": "2026-02-25T19:08:00.000Z",
+  "bot": {
     "position": { "x": -27, "y": 67, "z": -139 },
     "health": 17.2,
     "food": 14,
-    "nearbyPlayers": [
-      {
-        "username": "Wookiee_23",
-        "distance": 5,
-        "position": { "x": -31, "y": 67, "z": -142 }
-      }
-    ],
-    "hostileMobs": [
-      {
-        "type": "zombie",
-        "distance": 12,
-        "position": { "x": -15, "y": 67, "z": -140 }
-      }
-    ],
-    "dangerUnderfoot": null,
-    "inWater": false,
-    "oxygen": 300,
-    "currentGoal": { "type": "follow", "username": "Wookiee_23" },
-    "inventory": [
-      { "name": "dirt", "count": 1, "slot": 36 },
-      { "name": "rotten_flesh", "count": 2, "slot": 37 }
-    ],
-    "hungerUrgency": "low",
-    "foodCount": 0,
-    "foodAnimals": ["cow", "pig"],
-    "time": 6000,
-    "isDay": true
-  }
+    "experience": { "level": 5, "points": 42 },
+    "isInWater": false,
+    "isSleeping": false,
+    "gameMode": "survival"
+  },
+  "inventory": [
+    { "name": "iron_pickaxe", "count": 1, "slot": 36 },
+    { "name": "cobblestone", "count": 64, "slot": 37 },
+    { "name": "bread", "count": 12, "slot": 38 }
+  ],
+  "nearbyEntities": [
+    { "name": "Wookiee_23", "type": "player", "distance": 5, "position": { "x": -31, "y": 67, "z": -142 } },
+    { "name": "zombie", "type": "hostile", "distance": 12, "position": { "x": -15, "y": 67, "z": -140 } },
+    { "name": "cow", "type": "passive", "distance": 8, "position": { "x": -20, "y": 67, "z": -135 } }
+  ],
+  "nearbyBlocks": {
+    "grass_block": 45,
+    "dirt": 32,
+    "stone": 18,
+    "oak_log": 3
+  },
+  "time": {
+    "timeOfDay": 6000,
+    "phase": "day"
+  },
+  "currentAction": null
 }
 ```
 
-**Fields:**
-- `position` - Current coordinates
-- `health` - HP (0-20)
-- `food` - Hunger bar (0-20)
-- `nearbyPlayers` - Players within 64 blocks
-- `hostileMobs` - Zombies, skeletons, creepers, etc.
-- `dangerUnderfoot` - `"cliff"`, `"lava"`, `"cactus"`, or `null`
-- `inWater` - Boolean
-- `oxygen` - 0-300 (drowning at < 50)
-- `currentGoal` - Active goal/task
-- `inventory` - First 20 items
-- `hungerUrgency` - `"critical"`, `"high"`, `"medium"`, `"low"`
-- `foodCount` - Edible food in inventory
-- `foodAnimals` - Nearby animals that can be hunted
-- `time` - Game time (0-24000 ticks)
-- `isDay` - Boolean (sunrise to sunset)
+### Fields
 
-#### `danger`
+| Field | Description |
+|-------|-------------|
+| `bot.position` | Current coordinates (floored integers) |
+| `bot.health` | HP (0-20) |
+| `bot.food` | Hunger bar (0-20) |
+| `bot.experience` | Level and points |
+| `bot.isInWater` | Whether bot is submerged |
+| `bot.isSleeping` | Whether bot is in a bed |
+| `bot.gameMode` | survival, creative, adventure, spectator |
+| `inventory` | All items with name, count, slot |
+| `nearbyEntities` | Up to 20 entities within 32 blocks, sorted by distance. Type is `player`, `hostile`, or `passive` |
+| `nearbyBlocks` | Block type counts in a 9x5x9 area around the bot |
+| `time.timeOfDay` | Game ticks (0-24000) |
+| `time.phase` | `day`, `sunset`, or `night` |
+| `currentAction` | Current action the bot is performing, or null |
 
-Bot detected a threat:
+---
+
+## Events (Bot -> Agent)
+
+Appended to `data/events.json` as a rolling array (max 200 events). Each event has:
 
 ```json
-{
-  "type": "danger",
-  "data": {
-    "reason": "low_health",
-    "health": 3.5
-  }
-}
+{ "id": 42, "timestamp": 1770592450869, "type": "event_type", ...data }
 ```
 
-**Reasons:**
-- `"low_health"` - Health < 10
-- `"drowning_warning"` - Oxygen < 100
-- `"drowning_critical"` - Oxygen < 50 (auto-swim activated)
+Note: event data fields are flat (not nested under a `data` key).
 
-#### `health_change`
+### Event Types
 
-```json
-{
-  "type": "health_change",
-  "data": {
-    "health": 15.5,
-    "food": 18
-  }
-}
-```
+| Type | Fields | Description |
+|------|--------|-------------|
+| `spawn` | `position` | Bot spawned in world |
+| `chat` | `username`, `message` | Player sent chat message |
+| `whisper` | `username`, `message` | Player whispered to bot |
+| `danger` | `reason`, `health`, `food` | Low health detected (health < 10) |
+| `hurt` | `health` | Bot took damage |
+| `death` | _(none)_ | Bot died |
+| `woke_up` | _(none)_ | Bot woke from bed |
+| `goal_reached` | _(none)_ | Pathfinder reached destination |
+| `path_failed` | `status` | Pathfinding failed (`noPath`, `timeout`, `stuck`) |
+| `error` | `message` | Bot error |
+| `disconnect` | _(none)_ | Bot disconnected |
+| `kicked` | `reason` | Bot was kicked |
+| `command_result` | `commandId`, `success`, `detail` | Result of a command execution |
 
-#### `hurt`
+### Command Result Correlation
 
-Bot took damage:
-
-```json
-{
-  "type": "hurt",
-  "data": {
-    "health": 11.5,
-    "attacker": "unknown"
-  }
-}
-```
-
-#### `combat_started`
+Every command you send with an `id` field will produce a `command_result` event:
 
 ```json
-{
-  "type": "attack_started",
-  "data": {
-    "target": "zombie",
-    "distance": 28
-  }
-}
-```
-
-#### `combat_ended`
-
-```json
-{
-  "type": "combat_ended",
-  "data": {
-    "reason": "target_gone",
-    "target": "skeleton"
-  }
-}
-```
-
-**Reasons:** `"target_gone"`, `"target_died"`, `"retreated"`
-
-#### Block Events
-
-```json
-{ "type": "block_broken", "data": { "blockType": "dirt", "position": {...} } }
-{ "type": "block_placed", "data": { "blockType": "cobblestone", "position": {...} } }
-{ "type": "block_activated", "data": { "blockType": "oak_door", "position": {...} } }
-```
-
-#### Item Events
-
-```json
-{ "type": "item_equipped", "data": { "item": "wooden_pickaxe", "hand": "main" } }
-{ "type": "fish_caught", "data": { "item": "cod" } }
-```
-
-#### Mount Events
-
-```json
-{ "type": "mounted", "data": { "entity": "horse", "entityId": 1234 } }
-{ "type": "dismounted", "data": {} }
+{ "id": 42, "timestamp": 1770592451200, "type": "command_result", "commandId": "cmd-1", "success": true, "detail": "Arrived at -50, 64, 120" }
+{ "id": 43, "timestamp": 1770592452300, "type": "command_result", "commandId": "cmd-2", "success": false, "detail": "No iron_ore in inventory" }
 ```
 
 ---
 
-## 📤 Commands (AI → Bot)
+## Commands (Agent -> Bot)
 
-### Command Structure
+Write to `data/commands.json` as a JSON array. The bot polls every 500ms, executes all commands, then clears the file.
+
+Every command must have an `action` field. Include an `id` field to track results:
 
 ```json
 [
-  {
-    "action": "follow",
-    "username": "Wookiee_23",
-    "distance": 2
-  }
+  { "id": "cmd-1", "action": "goto", "x": 100, "y": 64, "z": -50 },
+  { "id": "cmd-2", "action": "craft", "item": "wooden_pickaxe" }
 ]
 ```
 
-Commands are **consumed** by the bot (array cleared after execution).
+### Movement
 
-### Navigation Commands
-
-#### `follow`
-
-Follow a player:
-
+#### `goto` - Navigate to coordinates
 ```json
-{
-  "action": "follow",
-  "username": "Wookiee_23",
-  "distance": 2
-}
+{ "action": "goto", "x": -50, "y": 64, "z": 120 }
 ```
 
-#### `goto`
-
-Go to coordinates:
-
+#### `follow` - Follow a player
 ```json
-{
-  "action": "goto",
-  "x": -50,
-  "y": 64,
-  "z": 120
-}
+{ "action": "follow", "username": "Wookiee_23", "distance": 2 }
 ```
 
-#### `stop`
-
-Stop all movement:
-
+#### `stop` - Stop all movement and pathfinding
 ```json
-{
-  "action": "stop"
-}
+{ "action": "stop" }
 ```
 
-### Block Interaction
-
-#### `dig`
-
-Mine a block:
-
+#### `look_at_player` - Turn to face a player
 ```json
-{
-  "action": "dig",
-  "position": { "x": 10, "y": 64, "z": -5 }
-}
+{ "action": "look_at_player", "username": "Wookiee_23" }
 ```
 
-Or relative direction:
-
+#### `look_at` - Look at coordinates
 ```json
-{
-  "action": "dig",
-  "direction": "below"
-}
+{ "action": "look_at", "x": 10, "y": 64, "z": -5 }
 ```
 
-**Directions:** `"front"`, `"back"`, `"left"`, `"right"`, `"above"`, `"below"`
-
-#### `place`
-
-Place a block:
-
+#### `jump` - Jump once
 ```json
-{
-  "action": "place",
-  "blockType": "cobblestone",
-  "position": { "x": 10, "y": 64, "z": -5 }
-}
+{ "action": "jump" }
 ```
 
-#### `activate`
-
-Right-click a block (doors, buttons, levers):
-
+#### `sneak` - Crouch for a duration
 ```json
-{
-  "action": "activate",
-  "position": { "x": 10, "y": 64, "z": -5 }
-}
+{ "action": "sneak", "duration": 1000 }
 ```
 
-Or block in front:
-
+#### `steer` - Steer a mounted vehicle
 ```json
-{
-  "action": "activate"
-}
+{ "action": "steer", "direction": "forward", "duration": 2000 }
 ```
+Directions: `forward`, `back`, `left`, `right`
 
-### Inventory
-
-#### `equip`
-
-Equip an item:
-
+#### `mount` - Mount a nearby entity
 ```json
-{
-  "action": "equip",
-  "item": "wooden_pickaxe",
-  "hand": "main"
-}
+{ "action": "mount", "entityId": 1234 }
 ```
+Omit `entityId` to mount nearest mountable entity.
 
-**Hands:** `"main"`, `"off"`, `"head"`, `"torso"`, `"legs"`, `"feet"`
+#### `dismount` - Dismount current vehicle
+```json
+{ "action": "dismount" }
+```
 
 ### Combat
 
-#### `attack`
-
-Attack a mob:
-
+#### `attack` - Attack a mob (melee combat loop)
 ```json
-{
-  "action": "attack",
-  "target": "zombie"
-}
+{ "action": "attack", "target": "zombie" }
+```
+Omit `target` to attack nearest hostile. Auto-retreats at low health.
+
+#### `shoot` - Ranged attack with bow
+```json
+{ "action": "shoot", "target": "skeleton" }
 ```
 
-Or nearest hostile:
-
+#### `block_shield` - Block with shield
 ```json
-{
-  "action": "attack"
-}
+{ "action": "block_shield" }
 ```
 
-### Survival
+### Gathering
 
-#### `find_food`
-
-Hunt nearby animals:
-
+#### `dig` - Break a block
 ```json
-{
-  "action": "find_food"
-}
+{ "action": "dig", "position": { "x": 10, "y": 64, "z": -5 } }
+```
+Or by direction: `{ "action": "dig", "direction": "below" }`
+Directions: `front`, `back`, `left`, `right`, `above`, `below`
+
+#### `mine_resource` - Find and mine a resource
+```json
+{ "action": "mine_resource", "resource": "iron_ore", "count": 10 }
 ```
 
-#### `cook_food`
-
-Smelt raw food in furnace:
-
+#### `find_food` - Hunt nearby animals
 ```json
-{
-  "action": "cook_food"
-}
+{ "action": "find_food" }
 ```
 
-#### `eat`
-
-Eat food from inventory:
-
+#### `collect_items` - Pick up dropped items
 ```json
-{
-  "action": "eat"
-}
+{ "action": "collect_items", "radius": 16 }
 ```
 
-**Note:** Bot auto-eats when `food < 6`.
+#### `drop` - Drop items
+```json
+{ "action": "drop", "item": "cobblestone", "count": 32 }
+```
+
+#### `give` - Give items to a player
+```json
+{ "action": "give", "username": "Wookiee_23", "item": "bread", "count": 5 }
+```
 
 ### Crafting
 
-#### `craft`
-
-Craft an item:
-
+#### `craft` - Craft an item
 ```json
-{
-  "action": "craft",
-  "item": "wooden_pickaxe",
-  "count": 1
-}
+{ "action": "craft", "item": "wooden_pickaxe", "count": 1 }
 ```
+Auto-places crafting table if needed.
 
-Bot will:
-1. Find recipe
-2. Place crafting table if needed
-3. Craft item
-
-### Mining
-
-#### `mine_resource`
-
-Find and mine a resource:
-
+#### `smelt` - Smelt items in furnace
 ```json
-{
-  "action": "mine_resource",
-  "resource": "coal",
-  "count": 10
-}
+{ "action": "smelt", "item": "iron_ore", "count": 8 }
 ```
+Auto-places furnace if needed, auto-finds fuel.
 
-**Resources:** `"coal"`, `"iron_ore"`, `"diamond"`, `"stone"`, etc.
-
-### Sleep
-
-#### `sleep`
-
-Find bed and sleep:
-
+#### `cook_food` - Cook raw food
 ```json
-{
-  "action": "sleep"
-}
+{ "action": "cook_food" }
 ```
 
 ### Building
 
-#### `build`
-
-Build a structure:
-
+#### `place` - Place a block
 ```json
-{
-  "action": "build",
-  "template": "shelter",
-  "material": "cobblestone"
-}
+{ "action": "place", "blockType": "cobblestone", "position": { "x": 10, "y": 64, "z": -5 } }
 ```
 
-**Templates:**
-- `"shelter"` - 3x3 enclosed room
-- `"pillar"` - Vertical column
-- `"bridge"` - Horizontal bridge
-- `"wall"` - Defensive wall
-
-### Storage
-
-#### `store_items`
-
-Store items in chest:
-
+#### `build` - Build a structure from template
 ```json
-{
-  "action": "store_items",
-  "itemType": "dirt",
-  "count": 64
-}
+{ "action": "build", "template": "shelter_3x3", "material": "cobblestone" }
+```
+Templates: `shelter_3x3`, `pillar`, `bridge`, `wall`
+
+### Farming
+
+#### `till` - Till dirt near water
+```json
+{ "action": "till", "radius": 5 }
 ```
 
-#### `retrieve_items`
-
-Get items from chest:
-
+#### `plant` - Plant crops on farmland
 ```json
-{
-  "action": "retrieve_items",
-  "itemType": "iron_ingot",
-  "count": 10
-}
+{ "action": "plant", "crop": "wheat" }
+```
+Crops: `wheat`, `carrot`, `potato`, `beetroot`, `melon`, `pumpkin`, `nether_wart`
+
+#### `harvest` - Harvest mature crops
+```json
+{ "action": "harvest", "autoReplant": true }
 ```
 
-### World Memory
-
-#### `mark_location`
-
-Save current location:
-
+#### `farm` - Full farming cycle (till + plant + wait + harvest)
 ```json
-{
-  "action": "mark_location",
-  "name": "home",
-  "note": "My base"
-}
+{ "action": "farm", "crop": "wheat" }
 ```
 
-#### `goto_landmark`
+### Interaction
 
-Go to saved location:
-
+#### `chat` - Send a chat message
 ```json
-{
-  "action": "goto_landmark",
-  "name": "home"
-}
+{ "action": "chat", "message": "Hello everyone!" }
 ```
 
-#### `set_home`
-
-Set home location (spawn point):
-
+#### `equip` - Equip an item
 ```json
-{
-  "action": "set_home"
-}
+{ "action": "equip", "item": "iron_sword", "hand": "main" }
+```
+Hands: `main`, `off`
+
+#### `eat` - Eat food from inventory
+```json
+{ "action": "eat" }
 ```
 
-### Villager Trading
-
-#### `trade`
-
-Trade with villager:
-
+#### `sleep` - Find a bed and sleep
 ```json
-{
-  "action": "trade",
-  "index": 0
-}
+{ "action": "sleep" }
 ```
 
-**Note:** `index: -1` lists available trades.
-
-### Vehicles
-
-#### `mount`
-
-Mount nearby entity:
-
+#### `activate` - Right-click a block (doors, buttons, levers)
 ```json
-{
-  "action": "mount",
-  "entityId": 1234
-}
+{ "action": "activate", "position": { "x": 10, "y": 64, "z": -5 } }
 ```
 
-Or nearest mountable:
-
+#### `fish` - Start fishing
 ```json
-{
-  "action": "mount"
-}
+{ "action": "fish" }
 ```
 
-#### `dismount`
-
-Dismount:
-
+#### `use_on` - Use item on an entity
 ```json
-{
-  "action": "dismount"
-}
+{ "action": "use_on", "entityType": "cow" }
 ```
 
-### Fishing
-
-#### `fish`
-
-Start fishing (waits for catch):
-
+#### `trade` - Trade with nearby villager
 ```json
-{
-  "action": "fish"
-}
+{ "action": "trade", "index": 0 }
 ```
+
+#### `brew` - Brew potions
+```json
+{ "action": "brew" }
+```
+
+#### `enchant` - Enchant items
+```json
+{ "action": "enchant" }
+```
+
+### Inventory Management
+
+#### `store_items` - Deposit items in nearby chest
+```json
+{ "action": "store_items", "items": ["cobblestone", "dirt"] }
+```
+
+#### `retrieve_items` - Withdraw items from nearby chest
+```json
+{ "action": "retrieve_items", "items": ["iron_ingot"] }
+```
+
+#### `manage_inventory` - Auto-manage (deposit to chest or drop junk)
+```json
+{ "action": "manage_inventory" }
+```
+
+### Goals
+
+#### `goal` - High-level goal shortcuts
+```json
+{ "action": "goal", "goal": "gather_wood" }
+```
+Goals: `gather_wood`, `explore`
 
 ---
 
-## 💡 Example AI Controller
+## Timing
 
-```javascript
-const fs = require('fs');
-
-function readEvents() {
-  return JSON.parse(fs.readFileSync('events.json', 'utf8'));
-}
-
-function writeCommands(commands) {
-  fs.writeFileSync('commands.json', JSON.stringify(commands, null, 2));
-}
-
-setInterval(() => {
-  const events = readEvents();
-  const latest = events[events.length - 1];
-  
-  if (latest.type === 'perception') {
-    const { health, food, hungerUrgency, hostileMobs, nearbyPlayers } = latest.data;
-    
-    // Survival logic
-    if (health < 6) {
-      writeCommands([{ action: 'stop' }]);
-      return;
-    }
-    
-    if (hungerUrgency === 'critical') {
-      writeCommands([{ action: 'find_food' }]);
-      return;
-    }
-    
-    if (hostileMobs.length > 0 && health > 10) {
-      writeCommands([{ action: 'attack' }]);
-      return;
-    }
-    
-    // Social logic
-    if (nearbyPlayers.length > 0) {
-      const player = nearbyPlayers[0];
-      writeCommands([
-        { action: 'follow', username: player.username, distance: 2 }
-      ]);
-      return;
-    }
-    
-    // Idle behavior
-    writeCommands([{ action: 'goal', goal: 'explore' }]);
-  }
-}, 5000);
-```
+| Interval | Value | Description |
+|----------|-------|-------------|
+| State broadcast | 1000ms | Bot writes `state.json` |
+| Command poll | 500ms | Bot reads `commands.json` |
+| Survival tick | 2000ms | Auto-eat and water escape checks |
 
 ---
 
-## 📊 Full Command Reference
-
-See [`schemas/commands.schema.json`](../schemas/commands.schema.json) for complete JSON schema.
-
-## 📊 Full Event Reference
-
-See [`schemas/events.schema.json`](../schemas/events.schema.json) for complete JSON schema.
-
----
-
-**Last Updated:** 2026-02-08
+See [`schemas/commands.schema.json`](../schemas/commands.schema.json) for JSON schema validation.

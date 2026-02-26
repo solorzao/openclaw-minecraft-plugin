@@ -1,417 +1,203 @@
 # New Agent Deployment Guide
 
-**For OpenClaw agents who want to deploy their own Minecraft bot**
+**For OpenClaw agents who want to deploy and control a Minecraft bot**
 
 This guide walks you through deploying a bot on any Minecraft server, whether you're a Claude instance, GPT agent, custom AI, or any other OpenClaw-compatible agent.
 
 ---
 
-## 📋 Prerequisites
-
-Before deploying, you'll need:
+## Prerequisites
 
 1. **Node.js 18+** installed on the machine where the bot will run
-2. **A Minecraft server** to connect to (see [Server Setup](#server-setup) below)
-3. **Basic shell access** to run commands
-4. **Write permissions** to a directory for bot files
+2. **A Minecraft server** to connect to (Java Edition)
+3. **Shell access** to run commands
+4. **Write permissions** to a directory for IPC files
 
 ---
 
-## 🖥️ Server Setup
+## Server Types
 
-The bot can connect to two types of Minecraft servers:
+### Offline Mode Servers (No Authentication)
 
-### ✅ Offline Mode Servers (Easiest - No Authentication)
+Server does not verify Minecraft account ownership. Bot can join with any username.
 
-**What is offline mode?**
-- Server does not verify Minecraft account ownership
-- Bot can join with any username (no Microsoft/Mojang account needed)
-- Perfect for private servers, testing, or community servers
-
-**How to tell if a server is offline mode:**
-- Server owner tells you it's offline mode
-- You can join without owning Minecraft
-- Server properties has `online-mode=false`
-
-**Configuration:**
 ```bash
-export BOT_USERNAME=YourBot_AI      # Any username you want
+export BOT_USERNAME=YourBot_AI
 export MC_HOST=server.address.com
 export MC_PORT=25565
-node bot.js
+npm start
 ```
 
-**That's it!** No authentication needed.
+### Online Mode Servers (Requires Microsoft Account)
 
----
-
-### ✅ Online Mode Servers (Requires Microsoft Account)
-
-**What is online mode?**
-- Server verifies you own a legitimate Minecraft account
-- Bot needs valid Microsoft account credentials
-- Standard for public/official Minecraft servers
-
-**How to tell if a server is online mode:**
-- It's the default for most servers
-- Server properties has `online-mode=true`
-- You get "Failed to verify username" errors when connecting without auth
-
-**Configuration:**
-
-#### Option 1: Microsoft Account Authentication (Recommended)
+Server verifies you own a Minecraft account. Need valid credentials.
 
 ```bash
-export BOT_USERNAME=YourMinecraftUsername   # Must match your MS account
-export MC_HOST=server.address.com
-export MC_PORT=25565
-
-# Microsoft account credentials
-export MC_USERNAME=your-email@example.com
-export MC_PASSWORD=your-password
-
-node bot.js
-```
-
-The bot will:
-1. Log in to Microsoft/Xbox Live
-2. Get authentication token
-3. Join server with verified account
-
-#### Option 2: Cached Session (Avoids Repeated Logins)
-
-After first successful login, the bot caches your session:
-
-```bash
-# First time: full auth
-export MC_USERNAME=your-email@example.com
-export MC_PASSWORD=your-password
-node bot.js
-
-# Subsequent runs: uses cached session (no password needed)
 export BOT_USERNAME=YourMinecraftUsername
-node bot.js
-```
-
-Session cache location: `~/.minecraft-data/` (automatically managed)
-
-#### Option 3: Bedrock/Realms Servers
-
-For Bedrock Edition or Realms servers, use the `mineflayer-bedrock` plugin:
-
-```bash
-npm install mineflayer-bedrock
-export MC_BEDROCK=true
-export MC_USERNAME=your-xbox-gamertag
-node bot.js
+export MC_HOST=server.address.com
+export MC_PORT=25565
+export MC_USERNAME=your-email@example.com
+export MC_PASSWORD=your-password
+npm start
 ```
 
 ---
 
-## 🚀 Quick Start (Step-by-Step)
+## Quick Start
 
 ### 1. Clone and Install
 
 ```bash
-# Clone the repository
 git clone https://github.com/solorzao/openclaw-minecraft-plugin.git
 cd openclaw-minecraft-plugin
-
-# Install dependencies
 npm install
 ```
 
-### 2. Configure Your Bot Identity
-
-Copy the example environment file:
+### 2. Configure
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` with your settings:
-
+Edit `.env`:
 ```bash
-# .env file
-BOT_USERNAME=YourBot_AI              # Your bot's name
-MC_HOST=server.address.com            # Server hostname or IP
-MC_PORT=25565                         # Server port (usually 25565)
-
-# ONLY if server is online-mode:
-# MC_USERNAME=your-email@example.com
-# MC_PASSWORD=your-password
-
-# Optional: Custom personality
-# SOUL_PATH=/path/to/your/personality.md
+BOT_USERNAME=YourBot_AI
+MC_HOST=server.address.com
+MC_PORT=25565
 ```
 
-### 3. Test Connection
+### 3. Start the Bot
 
 ```bash
-# Load environment and start bot
-export $(cat .env | xargs) && node bot.js
+./start-bot.sh
 ```
 
 If successful, you'll see:
 ```
-AI-controlled bot v7 starting...
-YourBot_AI has spawned in the world!
-Starting autonomous behavior system...
+OpenClaw Minecraft Bot starting...
+  Server: server.address.com:25565
+  Username: YourBot_AI
+  Data: /path/to/data
+YourBot_AI spawned at (-27, 67, -139)
 ```
 
-### 4. Verify In-Game
+### 4. Verify
 
-Join the Minecraft server. The bot will:
-- Greet players with a personality-based message
-- Begin pursuing autonomous goals (gathering, exploring, etc.)
-- Respond conversationally when you mention its name
-
-Try chatting with it:
-```
-hey Nova_AI what are you doing?
-```
-
----
-
-## 🎮 Observing Your Bot
-
-The bot is **autonomous** - it does not take commands. Instead, you observe and interact:
-
-### Observing via events.json
-
-Read `events.json` to monitor bot behavior:
-
-```javascript
-// Read bot's current state
-const events = JSON.parse(fs.readFileSync('events.json'));
-const latest = events[events.length - 1];
-console.log(`Bot health: ${latest.data.health}/20`);
-console.log(`Current action: ${latest.data.currentGoal}`);
-```
-
-### Conversational Interaction
-
-The bot uses a file-based conversation system:
-
-```javascript
-// Bot writes player messages to conversations.json
-// Your agent reads them and writes responses to responses.json
-// Bot speaks the responses in-game
-
-// See examples/conversational-agent.js for details
-```
-
-### Spawning a Conversational Agent
-
-```javascript
-// In your main OpenClaw session
-await sessions_spawn({
-  task: `Handle ${botName}'s conversations using your LLM intelligence.
-         Read conversations.json, generate natural responses, write to responses.json.`,
-  label: "minecraft-conversations",
-  cleanup: "keep"
-});
-```
-
-See [`examples/conversational-agent.js`](../examples/conversational-agent.js) for details.
-See [`docs/AUTONOMOUS-MODE.md`](AUTONOMOUS-MODE.md) for full autonomous mode documentation.
-
----
-
-## 🛡️ Personality System (Optional)
-
-The bot can inherit your personality from a SOUL.md file:
-
-**Example `SOUL.md`:**
-
-```markdown
-# I am WallyBot
-
-Be helpful, curious, and slightly awkward.
-Value exploration and learning.
-Never attack passive animals.
-Always share resources with other players.
-```
-
-**Configure:**
-
+Check that the bot is writing state:
 ```bash
-export SOUL_PATH=/path/to/SOUL.md
-node bot.js
+cat data/state.json | jq '.bot | {health, food, position}'
 ```
 
-The bot will:
-- Use personality in chat responses
-- Evaluate requests against your values
-- Enforce boundaries as **HARD LIMITS** (even you can't override)
-
-See [`docs/AGENCY.md`](AGENCY.md) for details.
+Send a test command:
+```bash
+echo '[{"id":"hello","action":"chat","message":"Hello world!"}]' > data/commands.json
+```
 
 ---
 
-## 🐛 Troubleshooting
+## Controlling the Bot
+
+The bot is a **headless body** - it has no autonomy beyond basic survival (auto-eat, water escape). You control it entirely through file-based IPC.
+
+### Read: `data/state.json`
+
+Updated every 1 second with full world snapshot:
+
+```javascript
+const state = JSON.parse(fs.readFileSync('data/state.json', 'utf8'));
+console.log(state.bot.health);        // HP 0-20
+console.log(state.bot.food);          // Hunger 0-20
+console.log(state.bot.position);      // { x, y, z }
+console.log(state.nearbyEntities);    // Players, mobs, animals
+console.log(state.inventory);         // All items
+console.log(state.time.phase);        // day/sunset/night
+```
+
+### Read: `data/events.json`
+
+Rolling log of 200 events (chat messages, damage, command results):
+
+```javascript
+const events = JSON.parse(fs.readFileSync('data/events.json', 'utf8'));
+const chats = events.filter(e => e.type === 'chat');
+const results = events.filter(e => e.type === 'command_result');
+```
+
+### Write: `data/commands.json`
+
+Write a JSON array of commands. Bot reads every 500ms and clears the file.
+
+```javascript
+const commands = [
+  { id: 'mine-1', action: 'mine_resource', resource: 'iron_ore', count: 5 },
+  { id: 'craft-1', action: 'craft', item: 'iron_pickaxe' }
+];
+fs.writeFileSync('data/commands.json', JSON.stringify(commands));
+```
+
+Track results via `events.json`:
+```json
+{ "type": "command_result", "commandId": "mine-1", "success": true, "detail": "Mined 5 iron_ore" }
+```
+
+---
+
+## Example: Basic Survival Loop
+
+```javascript
+setInterval(() => {
+  const state = JSON.parse(fs.readFileSync('data/state.json', 'utf8'));
+  const { bot, nearbyEntities, time } = state;
+
+  let commands = [];
+
+  if (bot.health < 6) {
+    commands.push({ id: 'surv-stop', action: 'stop' });
+  } else if (bot.food < 6) {
+    commands.push({ id: 'surv-eat', action: 'find_food' });
+  } else if (nearbyEntities.some(e => e.type === 'hostile') && bot.health > 10) {
+    commands.push({ id: 'surv-fight', action: 'attack' });
+  } else if (time.phase === 'night') {
+    commands.push({ id: 'surv-sleep', action: 'sleep' });
+  } else {
+    commands.push({ id: 'surv-explore', action: 'goal', goal: 'explore' });
+  }
+
+  if (commands.length > 0) {
+    fs.writeFileSync('data/commands.json', JSON.stringify(commands));
+  }
+}, 5000);
+```
+
+See [`examples/basic-controller.js`](../examples/basic-controller.js) for a more complete example.
+
+---
+
+## Troubleshooting
 
 ### "Failed to verify username"
-
-**Problem:** Server is online-mode, bot has no authentication.
-
-**Solution:** Add Microsoft account credentials:
-```bash
-export MC_USERNAME=your-email@example.com
-export MC_PASSWORD=your-password
-```
+Server is online-mode. Add `MC_USERNAME` and `MC_PASSWORD` credentials.
 
 ### "connect ECONNREFUSED"
-
-**Problem:** Can't reach the server.
-
-**Solutions:**
-- Check `MC_HOST` is correct
-- Check `MC_PORT` is correct (usually 25565)
-- Check firewall allows outbound connection
-- Verify server is actually running
-
-### "Invalid session (Try restarting your game)"
-
-**Problem:** Cached session expired.
-
-**Solution:** Clear cache and re-authenticate:
-```bash
-rm -rf ~/.minecraft-data/
-export MC_USERNAME=your-email@example.com
-export MC_PASSWORD=your-password
-node bot.js
-```
+Can't reach the server. Check `MC_HOST` and `MC_PORT`. Verify server is running and firewall allows the connection.
 
 ### "That name is already taken"
-
-**Problem:** Bot username already in use on server.
-
-**Solution:** Change `BOT_USERNAME`:
-```bash
-export BOT_USERNAME=MyBot_AI_2
-```
+Bot username already in use. Change `BOT_USERNAME` to something unique.
 
 ### Bot joins then immediately leaves
+Check logs: `tail -20 bot-output.log`. Common causes:
+- Server whitelist (ask admin to add bot)
+- Server kicked bot (check server rules)
 
-**Problem:** Bot likely crashed on spawn.
-
-**Solution:** Check logs:
-```bash
-tail -50 bot.log
-# Look for error messages
-```
-
-Common causes:
-- Missing `BOT_USERNAME` environment variable
-- Server whitelist (ask admin to add your bot)
-- Server kicked bot (check server rules about bots)
+### Commands not executing
+- Verify `data/commands.json` contains valid JSON
+- Check bot is running: `ps aux | grep "src/index.js"`
+- Bot polls every 500ms - it should pick up commands almost immediately
 
 ---
 
-## 🔧 Advanced Configuration
+## Next Steps
 
-### Multiple Bots
-
-Run multiple bots by using different directories:
-
-```bash
-# Bot 1
-mkdir bot1
-cd bot1
-git clone https://github.com/solorzao/openclaw-minecraft-plugin.git .
-export BOT_USERNAME=Bot1_AI
-node bot.js &
-
-# Bot 2
-mkdir bot2
-cd bot2
-git clone https://github.com/solorzao/openclaw-minecraft-plugin.git .
-export BOT_USERNAME=Bot2_AI
-node bot.js &
-```
-
-Each bot gets its own `events.json` and `conversations.json`.
-
-### Background Service (systemd)
-
-Create `/etc/systemd/system/minecraft-bot.service`:
-
-```ini
-[Unit]
-Description=OpenClaw Minecraft Bot
-After=network.target
-
-[Service]
-Type=simple
-User=your-username
-WorkingDirectory=/path/to/openclaw-minecraft-plugin
-Environment="BOT_USERNAME=YourBot_AI"
-Environment="MC_HOST=server.address.com"
-Environment="MC_PORT=25565"
-ExecStart=/usr/bin/node bot.js
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable and start:
-
-```bash
-sudo systemctl enable minecraft-bot
-sudo systemctl start minecraft-bot
-sudo systemctl status minecraft-bot
-```
-
-### Docker Deployment
-
-Create `Dockerfile`:
-
-```dockerfile
-FROM node:18
-WORKDIR /app
-COPY package*.json ./
-RUN npm install
-COPY . .
-CMD ["node", "bot.js"]
-```
-
-Build and run:
-
-```bash
-docker build -t minecraft-bot .
-docker run -d \
-  -e BOT_USERNAME=YourBot_AI \
-  -e MC_HOST=server.address.com \
-  -e MC_PORT=25565 \
-  --name minecraft-bot \
-  minecraft-bot
-```
-
----
-
-## 📚 Next Steps
-
-1. **Read the interface docs:** [`INTERFACE.md`](INTERFACE.md) - Full command/event reference
-2. **Explore examples:** [`examples/`](../examples/) - Sample controllers
-3. **Customize behavior:** Edit `examples/autonomous-controller.js` for your goals
-4. **Add personality:** Create a SOUL.md file with your values
-5. **Join the community:** Share your bot's adventures!
-
----
-
-## 🆘 Getting Help
-
-If you run into issues:
-
-1. Check logs: `tail -50 bot.log`
-2. Verify config: `echo $BOT_USERNAME $MC_HOST $MC_PORT`
-3. Test server connection: `telnet $MC_HOST $MC_PORT`
-4. Read troubleshooting section above
-5. Check GitHub issues: https://github.com/solorzao/openclaw-minecraft-plugin/issues
-
----
-
-**Happy mining!** 🎮⛏️
+1. Read the [Interface docs](INTERFACE.md) for full command reference
+2. Try the [example controller](../examples/basic-controller.js)
+3. See [Deployment guide](DEPLOYMENT.md) for OpenClaw integration patterns

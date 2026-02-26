@@ -1,196 +1,100 @@
 # Example Bot Controllers
 
-This directory contains example scripts demonstrating how to control the Minecraft bot.
+This directory contains example scripts demonstrating how to control the Minecraft bot via the file-based IPC interface.
 
-## autonomous-controller.js
+## basic-controller.js
 
-**Pattern 2: Autonomous Subagent Controller**
-
-A fully autonomous controller that reads `events.json`, makes decisions, and writes `commands.json` in a loop. Designed to be spawned as an OpenClaw subagent.
+A simple reactive controller that polls `state.json` and writes `commands.json` in a loop.
 
 ### Features
-- ✅ Critical survival logic (health, hunger, drowning)
-- ✅ Combat (attack/flee based on health)
-- ✅ Resource gathering (wood → stone → iron)
-- ✅ Crafting progression (wooden pickaxe → stone pickaxe → iron tools)
-- ✅ Shelter building at night
-- ✅ Exploration when idle
-- ✅ Periodic progress reports (every 10 minutes)
+- Basic survival (eat when hungry, flee danger)
+- Combat (attack nearby hostiles)
+- Social (follow nearby players)
+- Sleep at night
+- Explore when idle
 
-### Usage from OpenClaw Agent
-
-```javascript
-// Spawn autonomous controller as subagent
-await sessions_spawn({
-  task: `Run the Minecraft bot autonomous controller at /path/to/autonomous-controller.js
-         
-         Goals:
-         - Survive (health, hunger, shelter)
-         - Gather resources (wood, stone, iron)
-         - Build shelter when night comes
-         - Progress to iron tools
-         - Explore when idle
-         
-         Report back every 10 minutes with progress summary.
-         If you die or get stuck, explain what happened and restart.`,
-  label: "minecraft-controller",
-  cleanup: "keep"  // Let it run indefinitely
-});
-
-// Check on it later
-const history = await sessions_history("minecraft-controller");
-console.log(history);
-```
-
-### Usage Standalone (Testing)
+### Usage
 
 ```bash
-# Set file paths (optional, defaults to /data/minecraft-bot/)
-export EVENTS_FILE=/path/to/events.json
-export COMMANDS_FILE=/path/to/commands.json
+# Start the bot first
+cd ..
+npm start &
 
 # Run the controller
-node examples/autonomous-controller.js
+node basic-controller.js
 ```
 
 ### Customization
 
-Edit `decideAction()` function to change decision logic:
-- Add new goals (e.g., farm wheat, trade with villagers)
-- Change priorities (e.g., explore more, build less)
-- Add custom behaviors (e.g., mine specific ores, build specific structures)
+Edit the `decide()` function to change decision logic:
+- Add new priorities (e.g., mine resources, farm crops)
+- Change thresholds (e.g., eat at food < 10 instead of < 6)
+- Add long-term goals (e.g., craft iron tools, build shelter)
 
-### Check-In Behavior
+## spawn-bot.sh
 
-Controller reports progress every 10 minutes (configurable via `CHECKIN_INTERVAL_MS`):
-- Current status (health, food, position, time)
-- Stats (commands sent, food gathered, resources mined, shelters built)
-- Inventory size
-- Current goal
+Quick launcher script that starts the bot process in the background and shows status.
 
-In a real OpenClaw subagent, uncomment the `sessions_send()` call to send reports back to parent.
-
----
-
-## basic-controller.js
-
-**Pattern 1: Simple Reactive Controller**
-
-A simpler example that polls events and reacts to basic conditions. Good for learning the file interface.
-
-### Features
-- ✅ Basic survival (eat when hungry)
-- ✅ Flee from danger
-- ✅ Gather wood when idle
-
-(See file for details)
-
----
+```bash
+./spawn-bot.sh
+```
 
 ## Creating Your Own Controller
 
-### Step 1: Read Events
+### Step 1: Read State
 
 ```javascript
 const fs = require('fs');
-const events = JSON.parse(fs.readFileSync('events.json', 'utf8'));
-const latest = events[events.length - 1];
-
-if (latest.type === 'perception') {
-  const { health, food, position, nearbyMobs } = latest.data;
-  // Make decisions...
-}
+const state = JSON.parse(fs.readFileSync('data/state.json', 'utf8'));
+console.log(`Health: ${state.bot.health}/20`);
+console.log(`Position: ${JSON.stringify(state.bot.position)}`);
+console.log(`Nearby: ${state.nearbyEntities.length} entities`);
 ```
 
 ### Step 2: Write Commands
 
+Every command needs a unique `id` for result tracking:
+
 ```javascript
 const commands = [
-  { action: 'goto', x: 100, y: 64, z: -50 },
-  { action: 'mine_resource', resource: 'iron_ore' }
+  { id: 'cmd-1', action: 'goto', x: 100, y: 64, z: -50 },
+  { id: 'cmd-2', action: 'mine_resource', resource: 'iron_ore', count: 5 }
 ];
-
-fs.writeFileSync('commands.json', JSON.stringify(commands, null, 2));
+fs.writeFileSync('data/commands.json', JSON.stringify(commands, null, 2));
 ```
 
-### Step 3: Loop
+### Step 3: Check Results
+
+Command results appear in `events.json` with type `command_result`:
+
+```javascript
+const events = JSON.parse(fs.readFileSync('data/events.json', 'utf8'));
+const results = events.filter(e => e.type === 'command_result');
+// { id: 42, timestamp: ..., type: "command_result", commandId: "cmd-1", success: true, detail: "..." }
+```
+
+### Step 4: Loop
 
 ```javascript
 setInterval(() => {
-  const event = readLatestEvent();
-  const commands = decideAction(event);
-  if (commands) sendCommands(commands);
-}, 5000);  // Poll every 5 seconds
+  const state = readState();
+  const commands = decide(state);
+  if (commands.length > 0) writeCommands(commands);
+}, 5000);
 ```
-
-### Step 4: Report Back (in OpenClaw subagent)
-
-```javascript
-// Every 10 minutes
-if (shouldCheckIn()) {
-  await sessions_send({
-    sessionKey: parentSession,
-    message: `Progress: Mined 16 iron, built shelter, health 18/20`
-  });
-}
-```
-
----
-
-## Tips
-
-### Keep State
-Track progress between polls:
-```javascript
-let stats = {
-  woodGathered: 0,
-  stoneGathered: 0,
-  deaths: 0
-};
-```
-
-### Handle Errors
-Bot might crash or get stuck:
-```javascript
-try {
-  const event = readLatestEvent();
-  // ...
-} catch (err) {
-  console.error('Error:', err);
-  // Maybe restart bot or alert parent
-}
-```
-
-### Test Locally First
-Run your controller standalone before spawning as subagent:
-```bash
-node my-controller.js
-```
-
-### Use Environment Variables
-Make file paths configurable:
-```javascript
-const EVENTS_FILE = process.env.EVENTS_FILE || '/default/path/events.json';
-```
-
----
 
 ## Command Reference
 
-See [`docs/INTERFACE.md`](../docs/INTERFACE.md) for complete command/event reference.
+See [docs/INTERFACE.md](../docs/INTERFACE.md) for complete state/event/command reference.
 
 **Common Commands:**
-- `find_food` - Hunt animals for food
-- `gather_wood` - Chop trees
-- `mine_resource` - Mine ore (coal, iron, diamond)
-- `craft` - Craft items (pickaxe, sword, etc.)
-- `smelt` - Smelt ore in furnace
-- `build` - Build structures (shelter, pillar, bridge)
+- `goto` - Navigate to coordinates
+- `follow` - Follow a player
+- `stop` - Stop all movement
+- `attack` - Attack a mob
+- `mine_resource` - Find and mine ore
+- `craft` - Craft items
+- `eat` - Eat food
 - `sleep` - Sleep through night
-- `explore` - Wander and discover
-
-**Common Events:**
-- `perception` - Bot's current state (health, food, position, mobs)
-- `chat` - Chat messages from players
-- `death` - Bot died
-- `goal_complete` - Bot finished a task
+- `build` - Build structures (shelter, pillar, bridge, wall)
+- `farm` - Full farming cycle

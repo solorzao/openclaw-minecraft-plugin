@@ -1,88 +1,305 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/minecraft-ai-bot/schemas/commands.schema.json",
-  "title": "Minecraft AI Bot Commands Schema",
-  "description": "Schema for commands.json - commands written by AI, executed by bot",
+  "$id": "https://github.com/solorzao/openclaw-minecraft-plugin/schemas/commands.schema.json",
+  "title": "OpenClaw Minecraft Bot Commands",
+  "description": "Schema for commands.json - actions written by AI agent, executed by bot",
   "type": "array",
   "items": {
-    "oneOf": [
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "Unique command ID for tracking results in events.json"
+      },
+      "action": {
+        "type": "string",
+        "enum": [
+          "goto", "follow", "stop", "look_at_player", "look_at", "jump", "sneak", "steer", "mount", "dismount",
+          "attack", "shoot", "block_shield",
+          "dig", "mine_resource", "find_food", "collect_items", "drop", "give",
+          "craft", "smelt", "cook_food",
+          "place", "build",
+          "till", "plant", "harvest", "farm",
+          "chat", "equip", "eat", "sleep", "activate", "fish", "use_on", "trade", "brew", "enchant",
+          "store_items", "retrieve_items", "manage_inventory",
+          "goal"
+        ],
+        "description": "Action to execute"
+      }
+    },
+    "required": ["action"],
+    "allOf": [
       {
-        "$ref": "#/definitions/ChatCommand"
+        "if": { "properties": { "action": { "const": "goto" } } },
+        "then": {
+          "properties": {
+            "x": { "type": "integer" },
+            "y": { "type": "integer", "minimum": -64, "maximum": 320 },
+            "z": { "type": "integer" }
+          },
+          "required": ["action", "x", "y", "z"]
+        }
       },
       {
-        "$ref": "#/definitions/JumpCommand"
+        "if": { "properties": { "action": { "const": "follow" } } },
+        "then": {
+          "properties": {
+            "username": { "type": "string" },
+            "distance": { "type": "number", "minimum": 1, "maximum": 10, "default": 2 }
+          },
+          "required": ["action", "username"]
+        }
       },
       {
-        "$ref": "#/definitions/SneakCommand"
+        "if": { "properties": { "action": { "const": "look_at_player" } } },
+        "then": {
+          "properties": {
+            "username": { "type": "string" }
+          },
+          "required": ["action", "username"]
+        }
       },
       {
-        "$ref": "#/definitions/LookAtPlayerCommand"
+        "if": { "properties": { "action": { "const": "look_at" } } },
+        "then": {
+          "properties": {
+            "x": { "type": "number" },
+            "y": { "type": "number" },
+            "z": { "type": "number" }
+          },
+          "required": ["action", "x", "y", "z"]
+        }
       },
       {
-        "$ref": "#/definitions/FollowCommand"
+        "if": { "properties": { "action": { "const": "sneak" } } },
+        "then": {
+          "properties": {
+            "duration": { "type": "integer", "minimum": 100, "maximum": 5000, "default": 500 }
+          }
+        }
       },
       {
-        "$ref": "#/definitions/GotoCommand"
+        "if": { "properties": { "action": { "const": "steer" } } },
+        "then": {
+          "properties": {
+            "direction": { "type": "string", "enum": ["forward", "back", "left", "right"] },
+            "duration": { "type": "integer", "default": 1000 }
+          },
+          "required": ["action", "direction"]
+        }
       },
       {
-        "$ref": "#/definitions/StopCommand"
+        "if": { "properties": { "action": { "const": "mount" } } },
+        "then": {
+          "properties": {
+            "entityId": { "type": "integer", "description": "Optional. If omitted, mounts nearest mountable entity." }
+          }
+        }
       },
       {
-        "$ref": "#/definitions/GoalCommand"
+        "if": { "properties": { "action": { "const": "attack" } } },
+        "then": {
+          "properties": {
+            "target": { "type": "string", "description": "Mob type. If omitted, attacks nearest hostile." }
+          }
+        }
       },
       {
-        "$ref": "#/definitions/DigCommand"
+        "if": { "properties": { "action": { "const": "shoot" } } },
+        "then": {
+          "properties": {
+            "target": { "type": "string", "description": "Mob type. If omitted, shoots nearest hostile." }
+          }
+        }
       },
       {
-        "$ref": "#/definitions/PlaceCommand"
+        "if": { "properties": { "action": { "const": "dig" } } },
+        "then": {
+          "properties": {
+            "position": { "$ref": "#/definitions/Position" },
+            "direction": { "type": "string", "enum": ["front", "back", "left", "right", "above", "below"] }
+          }
+        }
       },
       {
-        "$ref": "#/definitions/EquipCommand"
+        "if": { "properties": { "action": { "const": "mine_resource" } } },
+        "then": {
+          "properties": {
+            "resource": { "type": "string", "description": "Block name (e.g., iron_ore, coal_ore, diamond_ore)" },
+            "count": { "type": "integer", "minimum": 1, "default": 5 }
+          },
+          "required": ["action", "resource"]
+        }
       },
       {
-        "$ref": "#/definitions/AttackCommand"
+        "if": { "properties": { "action": { "const": "collect_items" } } },
+        "then": {
+          "properties": {
+            "radius": { "type": "integer", "default": 16 }
+          }
+        }
       },
       {
-        "$ref": "#/definitions/DefendCommand"
+        "if": { "properties": { "action": { "const": "drop" } } },
+        "then": {
+          "properties": {
+            "item": { "type": "string" },
+            "count": { "type": "integer" }
+          },
+          "required": ["action", "item"]
+        }
       },
       {
-        "$ref": "#/definitions/CraftCommand"
+        "if": { "properties": { "action": { "const": "give" } } },
+        "then": {
+          "properties": {
+            "username": { "type": "string" },
+            "item": { "type": "string" },
+            "count": { "type": "integer" }
+          },
+          "required": ["action", "username", "item"]
+        }
       },
       {
-        "$ref": "#/definitions/SmeltCommand"
+        "if": { "properties": { "action": { "const": "craft" } } },
+        "then": {
+          "properties": {
+            "item": { "type": "string", "description": "Item to craft (e.g., wooden_pickaxe, crafting_table)" },
+            "count": { "type": "integer", "minimum": 1, "default": 1 }
+          },
+          "required": ["action", "item"]
+        }
       },
       {
-        "$ref": "#/definitions/ActivateCommand"
+        "if": { "properties": { "action": { "const": "smelt" } } },
+        "then": {
+          "properties": {
+            "item": { "type": "string", "description": "Item to smelt (e.g., iron_ore, raw_iron)" },
+            "count": { "type": "integer", "minimum": 1 }
+          },
+          "required": ["action", "item"]
+        }
       },
       {
-        "$ref": "#/definitions/MountCommand"
+        "if": { "properties": { "action": { "const": "place" } } },
+        "then": {
+          "properties": {
+            "blockType": { "type": "string" },
+            "position": { "$ref": "#/definitions/Position" }
+          },
+          "required": ["action", "blockType"]
+        }
       },
       {
-        "$ref": "#/definitions/DismountCommand"
+        "if": { "properties": { "action": { "const": "build" } } },
+        "then": {
+          "properties": {
+            "template": { "type": "string", "enum": ["shelter_3x3", "pillar", "bridge", "wall"] },
+            "material": { "type": "string", "default": "cobblestone" }
+          },
+          "required": ["action", "template"]
+        }
       },
       {
-        "$ref": "#/definitions/FishCommand"
+        "if": { "properties": { "action": { "const": "till" } } },
+        "then": {
+          "properties": {
+            "radius": { "type": "integer", "minimum": 1, "maximum": 10, "default": 5 }
+          }
+        }
       },
       {
-        "$ref": "#/definitions/TillCommand"
+        "if": { "properties": { "action": { "const": "plant" } } },
+        "then": {
+          "properties": {
+            "crop": { "type": "string", "enum": ["wheat", "carrot", "potato", "beetroot", "melon", "pumpkin", "nether_wart"], "default": "wheat" }
+          }
+        }
       },
       {
-        "$ref": "#/definitions/PlantCommand"
+        "if": { "properties": { "action": { "const": "harvest" } } },
+        "then": {
+          "properties": {
+            "autoReplant": { "type": "boolean", "default": true }
+          }
+        }
       },
       {
-        "$ref": "#/definitions/HarvestCommand"
+        "if": { "properties": { "action": { "const": "farm" } } },
+        "then": {
+          "properties": {
+            "crop": { "type": "string", "default": "wheat" }
+          }
+        }
       },
       {
-        "$ref": "#/definitions/FarmCommand"
+        "if": { "properties": { "action": { "const": "chat" } } },
+        "then": {
+          "properties": {
+            "message": { "type": "string", "maxLength": 256 }
+          },
+          "required": ["action", "message"]
+        }
       },
       {
-        "$ref": "#/definitions/ShootCommand"
+        "if": { "properties": { "action": { "const": "equip" } } },
+        "then": {
+          "properties": {
+            "item": { "type": "string" },
+            "hand": { "type": "string", "enum": ["main", "off"], "default": "main" }
+          },
+          "required": ["action", "item"]
+        }
       },
       {
-        "$ref": "#/definitions/BlockShieldCommand"
+        "if": { "properties": { "action": { "const": "activate" } } },
+        "then": {
+          "properties": {
+            "position": { "$ref": "#/definitions/Position" }
+          }
+        }
       },
       {
-        "$ref": "#/definitions/ManageInventoryCommand"
+        "if": { "properties": { "action": { "const": "use_on" } } },
+        "then": {
+          "properties": {
+            "entityId": { "type": "integer" },
+            "entityType": { "type": "string" }
+          }
+        }
+      },
+      {
+        "if": { "properties": { "action": { "const": "trade" } } },
+        "then": {
+          "properties": {
+            "index": { "type": "integer", "minimum": 0, "default": 0 }
+          }
+        }
+      },
+      {
+        "if": { "properties": { "action": { "const": "store_items" } } },
+        "then": {
+          "properties": {
+            "items": { "type": "array", "items": { "type": "string" }, "description": "Item name filters. If omitted, stores non-essential items." }
+          }
+        }
+      },
+      {
+        "if": { "properties": { "action": { "const": "retrieve_items" } } },
+        "then": {
+          "properties": {
+            "items": { "type": "array", "items": { "type": "string" }, "description": "Item name filters. If omitted, retrieves everything." }
+          }
+        }
+      },
+      {
+        "if": { "properties": { "action": { "const": "goal" } } },
+        "then": {
+          "properties": {
+            "goal": { "type": "string", "enum": ["gather_wood", "explore"] }
+          },
+          "required": ["action", "goal"]
+        }
       }
     ]
   },
@@ -90,506 +307,11 @@
     "Position": {
       "type": "object",
       "properties": {
-        "x": {
-          "type": "integer"
-        },
-        "y": {
-          "type": "integer"
-        },
-        "z": {
-          "type": "integer"
-        }
+        "x": { "type": "integer" },
+        "y": { "type": "integer" },
+        "z": { "type": "integer" }
       },
       "required": ["x", "y", "z"]
-    },
-    "ChatCommand": {
-      "type": "object",
-      "description": "Send a chat message in-game",
-      "properties": {
-        "action": {
-          "const": "chat"
-        },
-        "message": {
-          "type": "string",
-          "maxLength": 256,
-          "description": "Message to send (max 256 chars)"
-        }
-      },
-      "required": ["action", "message"],
-      "additionalProperties": false
-    },
-    "JumpCommand": {
-      "type": "object",
-      "description": "Make the bot jump once",
-      "properties": {
-        "action": {
-          "const": "jump"
-        }
-      },
-      "required": ["action"],
-      "additionalProperties": false
-    },
-    "SneakCommand": {
-      "type": "object",
-      "description": "Make the bot sneak (crouch) for specified duration",
-      "properties": {
-        "action": {
-          "const": "sneak"
-        },
-        "duration": {
-          "type": "integer",
-          "minimum": 100,
-          "maximum": 5000,
-          "default": 500,
-          "description": "Sneak duration in milliseconds (100-5000)"
-        }
-      },
-      "required": ["action"],
-      "additionalProperties": false
-    },
-    "LookAtPlayerCommand": {
-      "type": "object",
-      "description": "Turn to look at a specific player",
-      "properties": {
-        "action": {
-          "const": "look_at_player"
-        },
-        "username": {
-          "type": "string",
-          "description": "Minecraft username to look at"
-        }
-      },
-      "required": ["action", "username"],
-      "additionalProperties": false
-    },
-    "FollowCommand": {
-      "type": "object",
-      "description": "Follow a player using pathfinding",
-      "properties": {
-        "action": {
-          "const": "follow"
-        },
-        "username": {
-          "type": "string",
-          "description": "Minecraft username to follow"
-        },
-        "distance": {
-          "type": "number",
-          "minimum": 1,
-          "maximum": 10,
-          "default": 2,
-          "description": "Follow distance in blocks (1-10)"
-        }
-      },
-      "required": ["action", "username"],
-      "additionalProperties": false
-    },
-    "GotoCommand": {
-      "type": "object",
-      "description": "Navigate to specific coordinates using pathfinding",
-      "properties": {
-        "action": {
-          "const": "goto"
-        },
-        "x": {
-          "type": "integer",
-          "description": "Target X coordinate"
-        },
-        "y": {
-          "type": "integer",
-          "minimum": -64,
-          "maximum": 320,
-          "description": "Target Y coordinate (height, -64 to 320)"
-        },
-        "z": {
-          "type": "integer",
-          "description": "Target Z coordinate"
-        }
-      },
-      "required": ["action", "x", "y", "z"],
-      "additionalProperties": false
-    },
-    "StopCommand": {
-      "type": "object",
-      "description": "Stop all movement/pathfinding",
-      "properties": {
-        "action": {
-          "const": "stop"
-        }
-      },
-      "required": ["action"],
-      "additionalProperties": false
-    },
-    "GoalCommand": {
-      "type": "object",
-      "description": "Set high-level autonomous goal",
-      "properties": {
-        "action": {
-          "const": "goal"
-        },
-        "goal": {
-          "type": "string",
-          "enum": ["gather_wood", "explore", "gather_stone", "build_shelter", "idle"],
-          "description": "Goal type"
-        }
-      },
-      "required": ["action", "goal"],
-      "additionalProperties": false
-    },
-    "DigCommand": {
-      "type": "object",
-      "description": "Break/dig a block at specific position or direction (Phase 5 - Implemented)",
-      "properties": {
-        "action": {
-          "const": "dig"
-        },
-        "position": {
-          "$ref": "#/definitions/Position",
-          "description": "Absolute block coordinates to dig"
-        },
-        "direction": {
-          "type": "string",
-          "enum": ["front", "back", "left", "right", "above", "below"],
-          "description": "Relative direction to dig (alternative to position)"
-        }
-      },
-      "required": ["action"],
-      "additionalProperties": false,
-      "x-phase": 5,
-      "x-status": "implemented",
-      "x-events": ["block_broken", "dig_failed", "dig_error"]
-    },
-    "PlaceCommand": {
-      "type": "object",
-      "description": "Place a block at specific position (Phase 5 - Implemented)",
-      "properties": {
-        "action": {
-          "const": "place"
-        },
-        "blockType": {
-          "type": "string",
-          "description": "Block type to place (e.g., 'cobblestone', 'dirt', 'planks')"
-        },
-        "position": {
-          "$ref": "#/definitions/Position",
-          "description": "Optional - defaults to front of bot on ground"
-        }
-      },
-      "required": ["action", "blockType"],
-      "additionalProperties": false,
-      "x-phase": 5,
-      "x-status": "implemented",
-      "x-events": ["block_placed", "place_failed", "place_error"]
-    },
-    "EquipCommand": {
-      "type": "object",
-      "description": "Equip an item from inventory (Phase 5 - Implemented)",
-      "properties": {
-        "action": {
-          "const": "equip"
-        },
-        "item": {
-          "type": "string",
-          "description": "Item name to equip (e.g., 'wooden_pickaxe', 'iron_sword'). Supports partial matching."
-        },
-        "hand": {
-          "type": "string",
-          "enum": ["main", "off"],
-          "default": "main",
-          "description": "Which hand to equip in"
-        }
-      },
-      "required": ["action", "item"],
-      "additionalProperties": false,
-      "x-phase": 5,
-      "x-status": "implemented",
-      "x-events": ["item_equipped", "equip_failed", "equip_error"]
-    },
-    "AttackCommand": {
-      "type": "object",
-      "description": "Attack a specific mob type or nearest hostile (Phase 6 - Implemented)",
-      "properties": {
-        "action": {
-          "const": "attack"
-        },
-        "target": {
-          "type": "string",
-          "description": "Optional mob type to attack (e.g., 'zombie', 'skeleton'). If omitted, attacks nearest hostile."
-        }
-      },
-      "required": ["action"],
-      "additionalProperties": false,
-      "x-phase": 6,
-      "x-status": "implemented",
-      "x-events": ["attack_started", "attack_failed", "combat_ended", "combat_retreat"],
-      "x-notes": "Combat loop runs until target dies, escapes, or bot health < 6 (auto-retreat)"
-    },
-    "DefendCommand": {
-      "type": "object",
-      "description": "Set defensive mode (Phase 6 - Coming Soon)",
-      "properties": {
-        "action": {
-          "const": "defend"
-        },
-        "mode": {
-          "type": "string",
-          "enum": ["aggressive", "defensive", "passive"],
-          "description": "Combat mode: aggressive (attack all hostiles), defensive (attack when attacked), passive (never attack)"
-        }
-      },
-      "required": ["action", "mode"],
-      "additionalProperties": false,
-      "x-phase": 6,
-      "x-status": "not_implemented"
-    },
-    "CraftCommand": {
-      "type": "object",
-      "description": "Craft an item (Phase 7 - Coming Soon)",
-      "properties": {
-        "action": {
-          "const": "craft"
-        },
-        "recipe": {
-          "type": "string",
-          "description": "Item to craft (e.g., 'wooden_pickaxe', 'crafting_table')"
-        },
-        "count": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 64,
-          "default": 1,
-          "description": "Number of items to craft"
-        }
-      },
-      "required": ["action", "recipe"],
-      "additionalProperties": false,
-      "x-phase": 7,
-      "x-status": "not_implemented"
-    },
-    "SmeltCommand": {
-      "type": "object",
-      "description": "Smelt items in a furnace (Phase 23 - Implemented)",
-      "properties": {
-        "action": {
-          "const": "smelt"
-        },
-        "item": {
-          "type": "string",
-          "description": "Item to smelt (e.g., 'iron_ore', 'raw_iron', 'gold_ore', 'cobblestone')"
-        },
-        "count": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 64,
-          "description": "Number of items to smelt (optional, defaults to all)"
-        }
-      },
-      "required": ["action", "item"],
-      "additionalProperties": false,
-      "x-phase": 23,
-      "x-status": "implemented",
-      "x-events": ["smelting_started", "smelting_complete", "smelt_failed", "fuel_added"],
-      "x-notes": "Auto-finds fuel (coal/wood), auto-places furnace if needed, waits for completion, collects output"
-    },
-    "ActivateCommand": {
-      "type": "object",
-      "description": "Right-click/activate a block (doors, buttons, levers, etc.) - Phase 17 CRITICAL",
-      "properties": {
-        "action": {
-          "const": "activate"
-        },
-        "position": {
-          "$ref": "#/definitions/Position",
-          "description": "Optional block position. If omitted, activates block in front of bot."
-        }
-      },
-      "required": ["action"],
-      "additionalProperties": false,
-      "x-phase": 17,
-      "x-status": "implemented",
-      "x-events": ["block_activated", "activate_failed"],
-      "x-notes": "Essential for opening doors, pressing buttons, pulling levers, interacting with crafting tables/furnaces"
-    },
-    "MountCommand": {
-      "type": "object",
-      "description": "Mount a nearby entity (horse, boat, minecart, pig) - Phase 18 HIGH-VALUE",
-      "properties": {
-        "action": {
-          "const": "mount"
-        },
-        "entityId": {
-          "type": "integer",
-          "description": "Optional entity ID. If omitted, mounts nearest mountable entity within 5 blocks."
-        }
-      },
-      "required": ["action"],
-      "additionalProperties": false,
-      "x-phase": 18,
-      "x-status": "implemented",
-      "x-events": ["mounted", "mount_failed"],
-      "x-notes": "Enables fast travel (horses 2x speed), water navigation (boats), escape mechanism"
-    },
-    "DismountCommand": {
-      "type": "object",
-      "description": "Dismount from current vehicle - Phase 18 HIGH-VALUE",
-      "properties": {
-        "action": {
-          "const": "dismount"
-        }
-      },
-      "required": ["action"],
-      "additionalProperties": false,
-      "x-phase": 18,
-      "x-status": "implemented",
-      "x-events": ["dismounted", "dismount_failed"]
-    },
-    "FishCommand": {
-      "type": "object",
-      "description": "Start fishing (requires fishing rod in inventory) - Phase 19 HIGH-VALUE",
-      "properties": {
-        "action": {
-          "const": "fish"
-        }
-      },
-      "required": ["action"],
-      "additionalProperties": false,
-      "x-phase": 19,
-      "x-status": "implemented",
-      "x-events": ["fish_caught", "fish_failed"],
-      "x-notes": "Alternative food source, can catch treasure items, peaceful survival option"
-    },
-    "TillCommand": {
-      "type": "object",
-      "description": "Till dirt blocks near water to create farmland (Phase 23 - Implemented)",
-      "properties": {
-        "action": {
-          "const": "till"
-        },
-        "radius": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 10,
-          "default": 5,
-          "description": "Radius around water source to till"
-        }
-      },
-      "required": ["action"],
-      "additionalProperties": false,
-      "x-phase": 23,
-      "x-status": "implemented",
-      "x-events": ["tilling_complete", "till_failed"],
-      "x-notes": "Requires hoe in inventory, automatically finds water and nearby dirt"
-    },
-    "PlantCommand": {
-      "type": "object",
-      "description": "Plant crops on farmland (Phase 23 - Implemented)",
-      "properties": {
-        "action": {
-          "const": "plant"
-        },
-        "crop": {
-          "type": "string",
-          "enum": ["wheat", "carrot", "potato", "beetroot", "melon", "pumpkin", "nether_wart"],
-          "default": "wheat",
-          "description": "Type of crop to plant"
-        }
-      },
-      "required": ["action"],
-      "additionalProperties": false,
-      "x-phase": 23,
-      "x-status": "implemented",
-      "x-events": ["planting_complete", "plant_failed"],
-      "x-notes": "Requires seeds/crop item in inventory, automatically finds farmland"
-    },
-    "HarvestCommand": {
-      "type": "object",
-      "description": "Harvest mature crops and optionally replant (Phase 23 - Implemented)",
-      "properties": {
-        "action": {
-          "const": "harvest"
-        },
-        "autoReplant": {
-          "type": "boolean",
-          "default": true,
-          "description": "Automatically replant after harvesting"
-        }
-      },
-      "required": ["action"],
-      "additionalProperties": false,
-      "x-phase": 23,
-      "x-status": "implemented",
-      "x-events": ["harvest_complete"],
-      "x-notes": "Only harvests fully grown crops, auto-replants if seeds available"
-    },
-    "FarmCommand": {
-      "type": "object",
-      "description": "Complete farming cycle: till, plant, wait, harvest (Phase 23 - Implemented)",
-      "properties": {
-        "action": {
-          "const": "farm"
-        },
-        "crop": {
-          "type": "string",
-          "enum": ["wheat", "carrot", "potato", "beetroot"],
-          "default": "wheat",
-          "description": "Type of crop to farm"
-        }
-      },
-      "required": ["action"],
-      "additionalProperties": false,
-      "x-phase": 23,
-      "x-status": "implemented",
-      "x-events": ["tilling_complete", "planting_complete", "harvest_complete"],
-      "x-notes": "Full farming cycle with periodic harvest checks"
-    },
-    "ShootCommand": {
-      "type": "object",
-      "description": "Engage target with bow/crossbow at range (Phase 23 - Implemented)",
-      "properties": {
-        "action": {
-          "const": "shoot"
-        },
-        "target": {
-          "type": "string",
-          "description": "Target name (mob type or player). If omitted, shoots nearest hostile."
-        }
-      },
-      "required": ["action"],
-      "additionalProperties": false,
-      "x-phase": 23,
-      "x-status": "implemented",
-      "x-events": ["ranged_combat_started", "arrow_shot", "ranged_retreat"],
-      "x-notes": "Maintains optimal range (15-25 blocks), auto-retreats when low health, requires bow and arrows"
-    },
-    "BlockShieldCommand": {
-      "type": "object",
-      "description": "Block incoming damage with shield (Phase 23 - Implemented)",
-      "properties": {
-        "action": {
-          "const": "block_shield"
-        }
-      },
-      "required": ["action"],
-      "additionalProperties": false,
-      "x-phase": 23,
-      "x-status": "implemented",
-      "x-events": ["shield_blocking"],
-      "x-notes": "Requires shield in inventory, auto-stops after 5 seconds"
-    },
-    "ManageInventoryCommand": {
-      "type": "object",
-      "description": "Auto-manage inventory: deposit to chest or drop junk (Phase 23 - Implemented)",
-      "properties": {
-        "action": {
-          "const": "manage_inventory"
-        }
-      },
-      "required": ["action"],
-      "additionalProperties": false,
-      "x-phase": 23,
-      "x-status": "implemented",
-      "x-events": ["inventory_full_warning", "item_deposited", "item_dropped_auto", "inventory_managed"],
-      "x-notes": "Keeps essential items (tools, weapons, food), deposits rest to chest or drops low-value items"
     }
   }
 }

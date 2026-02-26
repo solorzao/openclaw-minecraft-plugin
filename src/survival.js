@@ -1,29 +1,20 @@
-const { GoalBlock } = require('mineflayer-pathfinder').goals;
+const { GoalBlock, GoalFollow } = require('mineflayer-pathfinder').goals;
 const { logEvent } = require('./events');
 const { FOOD_ITEMS, HOSTILE_MOBS } = require('./perception');
 
 let escaping = false;
 let fleeing = false;
-let fleeTimeout = null;
+let fleeStartTime = 0;
 let savedGoal = null;
 let lastPos = null;
 let stuckTicks = 0;
-const STUCK_THRESHOLD = 5; // 5 ticks * 2s = 10s without moving
-
-function canSeeEntity(bot, entity) {
-  // Quick line-of-sight check using mineflayer's built-in method
-  try {
-    return bot.canSeeEntity(entity);
-  } catch (e) {
-    // If check fails, assume visible (safer to flee than not)
-    return true;
-  }
-}
+const STUCK_THRESHOLD = 5; // 5 ticks * 1s = 5s without moving
 
 // Distances at which the bot reacts to threats
 const CREEPER_FLEE_DIST = 16; // creepers explode at ~3 blocks, give very wide berth
 const HOSTILE_FLEE_DIST = 12; // melee mobs - need margin for tick interval
-const FLEE_DURATION_MS = 4000;
+const FLEE_SAFE_MARGIN = 8;   // must be this far beyond flee dist before stopping
+const MAX_FLEE_MS = 12000;    // max flee time to prevent infinite running
 
 async function autoEat(bot) {
   if (bot.food >= 6) return false;
@@ -52,6 +43,17 @@ function saveCurrentGoal(bot) {
 }
 
 function restoreGoal(bot) {
+  // Rebuild goal from currentAction rather than using saved goal (entity refs go stale)
+  const action = require('./state').getCurrentAction();
+  if (action && action.type === 'follow') {
+    const p = bot.players[action.username];
+    if (p?.entity) {
+      bot.pathfinder.setGoal(new GoalFollow(p.entity, action.distance || 2), true);
+      savedGoal = null;
+      return;
+    }
+  }
+  // Fallback to saved goal for non-follow actions
   if (savedGoal) {
     bot.pathfinder.setGoal(savedGoal, true);
     savedGoal = null;
@@ -74,34 +76,56 @@ function fleeFrom(bot, entity) {
   return { x: fleeX, y: fleeY, z: fleeZ };
 }
 
-function checkThreats(bot) {
-  if (fleeing || escaping) return; // already handling a survival situation
-
-  const nearby = Object.values(bot.entities)
+function getNearestHostile(bot) {
+  return Object.values(bot.entities)
     .filter(e => {
-      if (e === bot.entity || !e.position || e.type !== 'mob') return false;
-      if (!HOSTILE_MOBS.includes(e.name?.toLowerCase())) return false;
-      // Ignore mobs too far vertically (underground/above)
+      if (e === bot.entity || !e.position) return false;
+      const name = (e.name || e.displayName || '').toLowerCase();
+      if (!HOSTILE_MOBS.includes(name)) return false;
       if (Math.abs(e.position.y - bot.entity.position.y) > 10) return false;
       return true;
     })
     .map(e => ({
       entity: e,
-      name: e.name.toLowerCase(),
+      name: (e.name || e.displayName).toLowerCase(),
       distance: bot.entity.position.distanceTo(e.position),
     }))
-    .sort((a, b) => a.distance - b.distance);
+    .sort((a, b) => a.distance - b.distance)[0] || null;
+}
 
-  if (nearby.length === 0) return;
+function checkThreats(bot) {
+  if (escaping) return;
 
-  const closest = nearby[0];
+  const closest = getNearestHostile(bot);
 
-  // Determine flee distance based on mob type
+  // While fleeing, check if we're safe enough to stop
+  if (fleeing) {
+    const elapsed = Date.now() - fleeStartTime;
+    const fleeDist = closest?.name === 'creeper' ? CREEPER_FLEE_DIST : HOSTILE_FLEE_DIST;
+    const safeDist = fleeDist + FLEE_SAFE_MARGIN;
+
+    if (!closest || closest.distance > safeDist || elapsed > MAX_FLEE_MS) {
+      fleeing = false;
+      logEvent('flee_ended', {
+        reason: !closest ? 'threat_gone' : elapsed > MAX_FLEE_MS ? 'max_time' : 'safe_distance',
+        elapsed: Math.floor(elapsed / 1000),
+      });
+      restoreGoal(bot);
+    } else {
+      // Still too close - update flee direction toward the current threat
+      fleeFrom(bot, closest.entity);
+    }
+    return;
+  }
+
+  if (!closest) return;
+
   const fleeDist = closest.name === 'creeper' ? CREEPER_FLEE_DIST : HOSTILE_FLEE_DIST;
 
-  if (closest.distance < fleeDist && canSeeEntity(bot, closest.entity)) {
+  if (closest.distance < fleeDist) {
     saveCurrentGoal(bot);
     fleeing = true;
+    fleeStartTime = Date.now();
 
     const target = fleeFrom(bot, closest.entity);
     logEvent('fleeing', {
@@ -109,16 +133,6 @@ function checkThreats(bot) {
       threatDistance: Math.floor(closest.distance),
       fleeTarget: target,
     });
-
-    // Clear any existing flee timeout
-    if (fleeTimeout) clearTimeout(fleeTimeout);
-
-    // After fleeing for a bit, stop and restore previous goal
-    fleeTimeout = setTimeout(() => {
-      fleeing = false;
-      fleeTimeout = null;
-      restoreGoal(bot);
-    }, FLEE_DURATION_MS);
   }
 }
 
@@ -179,10 +193,14 @@ function smartSprint(bot) {
   bot.setControlState('sprint', dist > 8 && bot.food > 6);
 }
 
+let stuckRetries = 0;
+const MAX_STUCK_RETRIES = 3;
+
 function checkStuck(bot) {
   const action = require('./state').getCurrentAction();
   if (!action) {
     stuckTicks = 0;
+    stuckRetries = 0;
     lastPos = null;
     return;
   }
@@ -191,14 +209,39 @@ function checkStuck(bot) {
   if (lastPos && pos.distanceTo(lastPos) < 0.5) {
     stuckTicks++;
     if (stuckTicks >= STUCK_THRESHOLD) {
-      logEvent('stuck', { position: pos.floored(), action, ticks: stuckTicks });
+      logEvent('stuck', { position: pos.floored(), action, ticks: stuckTicks, retries: stuckRetries });
+
+      // For follow actions, retry with fresh goal before giving up
+      if (action.type === 'follow' && stuckRetries < MAX_STUCK_RETRIES) {
+        stuckRetries++;
+        const p = bot.players[action.username];
+        if (p?.entity) {
+          bot.pathfinder.setGoal(new GoalFollow(p.entity, action.distance || 2), true);
+          logEvent('follow_retry', { username: action.username, retry: stuckRetries });
+          stuckTicks = 0;
+          // Keep lastPos so next tick correctly detects still-stuck
+          return;
+        }
+      }
+
+      // Give up - clear action and try a random wander to get unstuck
       bot.pathfinder.setGoal(null);
       require('./state').clearCurrentAction();
       stuckTicks = 0;
+      stuckRetries = 0;
       lastPos = null;
+
+      // Wander in a random direction to escape the stuck area
+      const angle = Math.random() * Math.PI * 2;
+      const wanderDist = 10 + Math.random() * 15;
+      const wx = Math.floor(pos.x + Math.cos(angle) * wanderDist);
+      const wz = Math.floor(pos.z + Math.sin(angle) * wanderDist);
+      bot.pathfinder.setGoal(new GoalBlock(wx, Math.floor(pos.y), wz), false);
+      logEvent('wander', { reason: 'stuck_giveup', target: { x: wx, z: wz } });
     }
   } else {
     stuckTicks = 0;
+    if (lastPos) stuckRetries = 0; // only reset retries on actual movement
   }
   lastPos = pos.clone();
 }

@@ -75,8 +75,8 @@ function getNearbyEntities(bot) {
 
 function getNearbyHostiles(bot) {
   return Object.values(bot.entities)
-    .filter(e => e.type === 'mob' && e.position &&
-      HOSTILE_MOBS.includes(e.name?.toLowerCase()) &&
+    .filter(e => e.position &&
+      HOSTILE_MOBS.includes((e.name || e.displayName || '').toLowerCase()) &&
       bot.entity.position.distanceTo(e.position) < 20)
     .sort((a, b) =>
       bot.entity.position.distanceTo(a.position) - bot.entity.position.distanceTo(b.position));

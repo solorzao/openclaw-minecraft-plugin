@@ -62,9 +62,11 @@ function createBot() {
     console.log(`${bot.username} spawned at ${bot.entity.position.floored()}`);
 
     const movements = new Movements(bot);
-    movements.allowParkour = false;
-    movements.canDig = true;
+    movements.allowParkour = true;
+    movements.canDig = false;   // don't dig without tools, wastes time
+    movements.allow1by1towers = true; // pillar up to reach higher ground
     movements.allowFreeMotion = false;
+    movements.scafoldingBlocks = []; // don't use inventory blocks for scaffolding
     bot.pathfinder.setMovements(movements);
 
     logEvent('spawn', {
@@ -126,6 +128,14 @@ function createBot() {
 
   bot.on('path_update', (r) => {
     if (r.status === 'noPath' || r.status === 'timeout' || r.status === 'stuck') {
+      const action = require('./state').getCurrentAction();
+      // Don't clear follow action on timeout if we're close to the target
+      if (action?.type === 'follow' && r.status === 'timeout') {
+        const p = bot.players[action.username];
+        if (p?.entity && bot.entity.position.distanceTo(p.entity.position) < 8) {
+          return; // close enough, just wait
+        }
+      }
       logEvent('path_failed', { status: r.status });
       require('./state').clearCurrentAction();
     }

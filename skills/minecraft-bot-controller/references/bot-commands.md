@@ -1,127 +1,145 @@
 # Bot Commands & Architecture
 
-## In-Game Commands
+## In-Game Commands (Optional)
 
-Players can control the bot by saying these in Minecraft chat:
+Your bot.js can optionally parse commands from chat. Example patterns:
 
-### Navigation
-- `nova follow` - Follow the player
-- `nova stop` / `nova stay` - Stop moving
-- `nova goto <x> <z>` - Teleport to coordinates (via pathfinding)
-
-### Resource Management
-- `nova mine <material>` - Mine specific block (wood, stone, iron, etc.)
-- `nova equip <item>` - Equip item from inventory
-
-### Status & Help
-- `nova status` - Show health, food, position
-- `nova help` - List available commands
-
-## Autonomous Behavior
-
-The bot runs continuously with autonomous survival goals:
-
-### Goal Categories (weighted)
-
-1. **Survival** (weight: 10)
-   - Find food when hungry
-   - Flee from danger
-   - Heal when low health
-
-2. **Gathering** (weight: 5)
-   - Mine resources (stone, wood, ore)
-   - Fish for food
-   - Collect items
-
-3. **Building** (weight: 3)
-   - Build shelter
-   - Craft tools
-   - Create storage
-
-4. **Exploration** (weight: 2)
-   - Explore new areas
-   - Mark landmarks
-   - Find villages
-
-### Memory System
-
-Bot maintains persistent world memory:
-- **File:** `/data/minecraft-bot/world-memory.json`
-- **Stores:** Landmarks, bases, villages, resources
-- **Persists:** Survives bot restart
-
-## Bot-to-Bot Communication (Phase 21)
-
-Bots can whisper each other (detected by username patterns):
-
-```
-Detected bots:
-- Nova_AI (main bot)
-- Whisper protocol: /msg <botname> <message>
+```javascript
+// Detect commands: "botname command args"
+const cmdMatch = message.toLowerCase().match(/^botname\s+(\w+)\s*(.*)?$/i);
+if (cmdMatch) {
+  const cmd = cmdMatch[1];
+  const args = cmdMatch[2] || '';
+  
+  switch(cmd) {
+    case 'follow':
+      // Move towards player
+      bot.pathfinder.setGoal(new GoalFollow(player));
+      break;
+    case 'stop':
+      // Stop moving
+      bot.pathfinder.setGoal(null);
+      break;
+    case 'status':
+      // Report health, food, position
+      bot.chat(`HP: ${bot.health}, Food: ${bot.food}, Pos: ${bot.entity.position}`);
+      break;
+    case 'help':
+      bot.chat('Commands: follow, stop, status');
+      break;
+    // Add your custom commands here
+  }
+}
 ```
 
-Example: `nova whisper bot2 "need help at base"`
+**Note:** The LLM monitor responds to ALL mentions with conversational LLM responses. Commands are optional and handled by your bot.js, not the monitor.
 
-## Response Integration
+## Chat Log Format
 
-### Flow
+The monitor expects chat logs in this exact format:
 
 ```
-Player chat → bot.log → subagent reads → generates response → writes to responses.json → bot.js processes → chat sent
+username: message text
+another_player: hello there
 ```
 
-### Response File Format
+**Example from bot.js:**
+```javascript
+bot.on('chat', (username, message) => {
+  console.log(`${username}: ${message}`);  // Stdout → redirected to log file
+});
+```
 
-**File:** `/data/minecraft-bot/responses.json`
+**File redirection (when starting bot):**
+```bash
+node bot.js > bot.log 2>&1 &
+```
+
+## Response File Schema
+
+Your bot reads and processes this file every 1-2 seconds:
 
 ```json
 [
   {
     "conversationId": 1,
-    "text": "Your response here"
+    "text": "Response text the monitor generated"
   }
 ]
 ```
 
-**Cleared automatically** after bot.js reads (every 1 second)
+**Required format:**
+- Array of objects
+- Each object has `conversationId` and `text` fields
+- `text` is sent directly to `bot.chat()`
+- File is cleared after processing
 
-### Detected Mentions
+## Optional: Persistent Memory
 
-Bot responds when chat contains:
-- `nova` (shorthand)
-- `Nova_AI` (full name)
-- `@Nova_AI` (mention format)
+If your bot needs to remember locations or state:
 
-## Event Logging
+```javascript
+const memory = {
+  visited: [],
+  resources: {},
+  players: {}
+};
 
-Bot logs all activity to help monitoring systems:
+setInterval(() => {
+  fs.writeFileSync('./memory.json', JSON.stringify(memory));
+}, 60000);
+```
 
-**File:** `/data/minecraft-bot/events.json`
+## Optional: Bot-to-Bot Communication
 
-Events include:
-- Chat messages (`username: <msg>`)
-- Commands executed
-- Autonomous goals
-- Errors and warnings
-- Health/food changes
-- Mob encounters
+Bots can detect and interact with each other via chat:
 
-Used by subagent to detect new chat and respond appropriately.
+```javascript
+bot.on('chat', (username, message) => {
+  // Detect if speaker is another bot (by username pattern)
+  if (username.includes('bot') || username.includes('Bot')) {
+    // Inter-bot communication logic
+  }
+});
+```
 
-## Autonomous Phases
+## Architecture Notes
 
-The bot implements 23 phases of capability:
+- **Not a plugin:** This is a standalone mineflayer bot controlled by OpenClaw subagents
+- **Real-time:** Monitor checks every 2 seconds, responses sent immediately
+- **Stateless responses:** Response file is cleared after each read
+- **Flexible personality:** Monitor generates responses matching any personality you specify
 
-- **Phases 1-7:** Navigation, perception, goals, interaction, combat, water safety
-- **Phases 8-16:** Hunger, crafting, mining, sleep, building, storage, memory, trading, potions
-- **Phases 17-19:** Block activation, mount/dismount, fishing
-- **Phases 20-23:** Autonomy with agency, bot communication, critical capabilities, survival
+## Example Bot Skeleton
 
-Current: **Phase 23 COMPLETE** - Full autonomous survivor with free will
+```javascript
+const mineflayer = require('mineflayer');
+const fs = require('fs');
 
-## Important Notes
+const bot = mineflayer.createBot({
+  host: 'localhost',
+  port: 25565,
+  username: 'MyBot',
+  offline: true
+});
 
-- Bot is **NOT** a plugin (it's a mineflayer bot running standalone)
-- Responses are **synchronous** (bot.js reads every 1 second)
-- No persistence for responses (file is cleared after read)
-- All responses go through Minecraft chat (no console/server logs)
+// Log chat for monitor
+bot.on('chat', (username, message) => {
+  console.log(`${username}: ${message}`);
+});
+
+// Process responses from monitor
+setInterval(() => {
+  try {
+    const responses = JSON.parse(fs.readFileSync('./responses.json'));
+    responses.forEach(r => {
+      if (r.text) bot.chat(r.text);
+    });
+    fs.writeFileSync('./responses.json', '[]');
+  } catch(e) {}
+}, 1000);
+
+bot.on('spawn', () => {
+  console.log('Bot spawned!');
+});
+```

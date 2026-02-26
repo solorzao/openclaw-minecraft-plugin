@@ -41,9 +41,34 @@ async function craft(bot, cmd) {
     return;
   }
 
+  // Check all recipes (not just ones with sufficient materials) for better error messages
   const recipes = bot.recipesFor(item.id);
   if (!recipes || recipes.length === 0) {
-    logEvent('command_result', { commandId: cmd.id, success: false, detail: `No recipe or missing materials for ${itemName}` });
+    // Try to find what ingredients are actually needed
+    const allRecipes = bot.recipesFor(item.id, null, true); // includeUnobtainable
+    if (allRecipes && allRecipes.length > 0) {
+      const r = allRecipes[0];
+      const missing = [];
+      if (r.delta) {
+        for (const d of r.delta) {
+          if (d.count < 0) {
+            const ingItem = mcData.items[d.id];
+            const ingName = ingItem ? ingItem.name : `id:${d.id}`;
+            const have = countInventoryItem(bot, ingName);
+            const need = Math.abs(d.count) * count;
+            if (have < need) missing.push({ item: ingName, need, have });
+          }
+        }
+      }
+      logEvent('command_result', {
+        commandId: cmd.id, success: false,
+        detail: `Missing materials for ${itemName}`,
+        missingMaterials: missing,
+        requiresTable: r.requiresTable || false,
+      });
+    } else {
+      logEvent('command_result', { commandId: cmd.id, success: false, detail: `No recipe exists for ${itemName}` });
+    }
     return;
   }
 

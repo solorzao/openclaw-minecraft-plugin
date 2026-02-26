@@ -9,6 +9,7 @@ let savedGoal = null;
 let lastPos = null;
 let stuckTicks = 0;
 const STUCK_THRESHOLD = 5; // 5 ticks * 1s = 5s without moving
+let lastNearestThreat = null; // Tracked for LLM visibility
 
 // Distances at which the bot reacts to threats
 const CREEPER_FLEE_DIST = 16; // creepers explode at ~3 blocks, give very wide berth
@@ -97,6 +98,8 @@ function checkThreats(bot) {
   if (escaping) return;
 
   const closest = getNearestHostile(bot);
+  // Track nearest threat for LLM state visibility
+  lastNearestThreat = closest ? { name: closest.name, distance: Math.floor(closest.distance) } : null;
 
   // While fleeing, check if we're safe enough to stop
   if (fleeing) {
@@ -246,14 +249,89 @@ function checkStuck(bot) {
   lastPos = pos.clone();
 }
 
-async function survivalTick(bot) {
-  escapeWater(bot);
-  checkThreats(bot);
-  checkStuck(bot);
-  smartSprint(bot);
-  if (bot.food < 6) {
-    await autoEat(bot);
+// Armor tier ordering (higher = better)
+const ARMOR_TIERS = { leather: 1, golden: 2, chain: 3, iron: 4, diamond: 5, netherite: 6 };
+const ARMOR_SLOT_MAP = { helmet: 'head', chestplate: 'torso', leggings: 'legs', boots: 'feet' };
+
+function getArmorTier(itemName) {
+  for (const [tier, val] of Object.entries(ARMOR_TIERS)) {
+    if (itemName.includes(tier)) return val;
+  }
+  return 0;
+}
+
+function getArmorType(itemName) {
+  for (const type of Object.keys(ARMOR_SLOT_MAP)) {
+    if (itemName.includes(type)) return type;
+  }
+  return null;
+}
+
+let lastArmorCheck = 0;
+const ARMOR_CHECK_INTERVAL = 10000; // Check every 10 seconds
+
+async function autoEquipArmor(bot) {
+  const now = Date.now();
+  if (now - lastArmorCheck < ARMOR_CHECK_INTERVAL) return;
+  lastArmorCheck = now;
+
+  const slotIndices = { head: 5, torso: 6, legs: 7, feet: 8 };
+
+  for (const [type, slotName] of Object.entries(ARMOR_SLOT_MAP)) {
+    const slotIndex = slotIndices[slotName];
+    const current = bot.inventory.slots[slotIndex];
+    const currentTier = current ? getArmorTier(current.name) : 0;
+
+    // Find best armor of this type in inventory
+    const candidates = bot.inventory.items().filter(i => getArmorType(i.name) === type);
+    let best = null;
+    let bestTier = currentTier;
+
+    for (const item of candidates) {
+      const tier = getArmorTier(item.name);
+      if (tier > bestTier) {
+        best = item;
+        bestTier = tier;
+      }
+    }
+
+    if (best) {
+      try {
+        await bot.equip(best, slotName);
+        logEvent('auto_equipped', { item: best.name, slot: slotName });
+      } catch (e) {}
+    }
   }
 }
 
-module.exports = { survivalTick, autoEat, escapeWater, checkThreats };
+async function survivalTick(bot) {
+  try {
+    escapeWater(bot);
+    checkThreats(bot);
+    checkStuck(bot);
+    smartSprint(bot);
+    await autoEquipArmor(bot);
+    if (bot.food < 6) {
+      await autoEat(bot);
+    }
+  } catch (err) {
+    // Never let a survival tick error crash the bot
+    console.error('Survival tick error:', err.message);
+  }
+}
+
+// Expose internal survival state for LLM visibility
+function getSurvivalState() {
+  return {
+    isFleeing: fleeing,
+    isEscapingWater: escaping,
+    isStuck: stuckTicks >= STUCK_THRESHOLD,
+    stuckTicks,
+    nearestThreat: lastNearestThreat,
+    fleeInfo: fleeing ? {
+      elapsed: Math.floor((Date.now() - fleeStartTime) / 1000),
+    } : null,
+  };
+}
+
+module.exports = { survivalTick, autoEat, escapeWater, checkThreats, autoEquipArmor, getSurvivalState };

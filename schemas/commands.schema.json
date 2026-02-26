@@ -22,6 +22,8 @@
           "till", "plant", "harvest", "farm",
           "chat", "equip", "eat", "sleep", "activate", "fish", "use_on", "trade", "brew", "enchant",
           "store_items", "retrieve_items", "manage_inventory",
+          "scan", "find_blocks", "where_am_i", "list_recipes", "goto_block",
+          "verify", "cancel", "inspect_container", "set_note", "get_notes",
           "goal"
         ],
         "description": "Action to execute"
@@ -289,6 +291,85 @@
         "then": {
           "properties": {
             "items": { "type": "array", "items": { "type": "string" }, "description": "Item name filters. If omitted, retrieves everything." }
+          }
+        }
+      },
+      {
+        "if": { "properties": { "action": { "const": "scan" } } },
+        "then": {
+          "properties": {
+            "radius": { "type": "integer", "minimum": 8, "maximum": 32, "default": 32, "description": "Scan radius in blocks" }
+          }
+        }
+      },
+      {
+        "if": { "properties": { "action": { "const": "find_blocks" } } },
+        "then": {
+          "properties": {
+            "blockType": { "type": "string", "description": "Block name to search for (e.g., diamond_ore, chest)" },
+            "maxDistance": { "type": "integer", "minimum": 1, "maximum": 128, "default": 64 },
+            "count": { "type": "integer", "minimum": 1, "maximum": 50, "default": 10 }
+          },
+          "required": ["action", "blockType"]
+        }
+      },
+      {
+        "if": { "properties": { "action": { "const": "list_recipes" } } },
+        "then": {
+          "properties": {
+            "item": { "type": "string", "description": "Item name. If omitted, lists all craftable items from current inventory." }
+          }
+        }
+      },
+      {
+        "if": { "properties": { "action": { "const": "goto_block" } } },
+        "then": {
+          "properties": {
+            "blockType": { "type": "string", "description": "Block name to navigate to (e.g., crafting_table, chest)" },
+            "maxDistance": { "type": "integer", "minimum": 1, "maximum": 128, "default": 64 }
+          },
+          "required": ["action", "blockType"]
+        }
+      },
+      {
+        "if": { "properties": { "action": { "const": "verify" } } },
+        "then": {
+          "properties": {
+            "check": { "type": "string", "enum": ["craft", "smelt", "goto", "attack", "sleep", "mine"], "description": "Action to verify feasibility of" },
+            "item": { "type": "string", "description": "Item name (for craft/smelt checks)" },
+            "recipe": { "type": "string", "description": "Alias for item (for craft checks)" },
+            "resource": { "type": "string", "description": "Resource name (for mine checks)" },
+            "target": { "type": "string", "description": "Target name (for attack/mine checks)" },
+            "x": { "type": "integer", "description": "X coordinate (for goto checks)" },
+            "y": { "type": "integer", "description": "Y coordinate (for goto checks)" },
+            "z": { "type": "integer", "description": "Z coordinate (for goto checks)" }
+          },
+          "required": ["action", "check"]
+        }
+      },
+      {
+        "if": { "properties": { "action": { "const": "inspect_container" } } },
+        "then": {
+          "properties": {
+            "position": { "$ref": "#/definitions/Position", "description": "Position of the container. If omitted, finds nearest." }
+          }
+        }
+      },
+      {
+        "if": { "properties": { "action": { "const": "set_note" } } },
+        "then": {
+          "properties": {
+            "key": { "type": "string", "description": "Note key (e.g., 'base_location', 'current_goal')" },
+            "value": { "type": "string", "description": "Note value. Set to empty string or null to delete." }
+          },
+          "required": ["action", "key"]
+        }
+      },
+      {
+        "if": { "properties": { "action": { "const": "get_notes" } } },
+        "then": {
+          "properties": {
+            "key": { "type": "string", "description": "Specific note key to retrieve. If omitted, returns all notes." }
           }
         }
       },

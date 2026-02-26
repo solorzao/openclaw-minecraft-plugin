@@ -3,21 +3,80 @@ const { goals } = require('mineflayer-pathfinder');
 const { GoalFollow, GoalNear, GoalXZ } = goals;
 const { logEvent } = require('../events');
 const { setCurrentAction, clearCurrentAction } = require('../state');
-const { getNearbyHostiles } = require('../perception');
+const { getNearbyHostiles, HOSTILE_MOBS } = require('../perception');
+
+const WEAPON_PRIORITY = ['netherite_sword', 'diamond_sword', 'iron_sword', 'stone_sword', 'golden_sword', 'wooden_sword',
+  'netherite_axe', 'diamond_axe', 'iron_axe', 'stone_axe'];
 
 let combatInterval = null;
 let rangedCombatActive = false;
 let shieldBlockActive = false;
 
+// Track combat state for LLM visibility
+let combatState = {
+  active: false,
+  target: null,
+  targetHealth: null,
+  startTime: null,
+  hitsDealt: 0,
+  damageDealt: 0,
+  damageTaken: 0,
+  startHealth: null,
+};
+
+function getCombatState() {
+  if (!combatState.active) return null;
+  return {
+    ...combatState,
+    elapsed: combatState.startTime ? Math.floor((Date.now() - combatState.startTime) / 1000) : 0,
+  };
+}
+
+function resetCombatState() {
+  combatState = { active: false, target: null, targetHealth: null, startTime: null, hitsDealt: 0, damageDealt: 0, damageTaken: 0, startHealth: null };
+}
+
+async function equipBestWeapon(bot) {
+  for (const weaponName of WEAPON_PRIORITY) {
+    const weapon = bot.inventory.items().find(i => i.name === weaponName);
+    if (weapon) {
+      try { await bot.equip(weapon, 'hand'); } catch (e) {}
+      return weapon;
+    }
+  }
+  return null;
+}
+
 function startCombat(bot, mob) {
   if (combatInterval) clearInterval(combatInterval);
+
+  // Equip best weapon at start of combat
+  equipBestWeapon(bot);
+
+  // Initialize combat tracking
+  combatState = {
+    active: true,
+    target: mob.name,
+    targetHealth: mob.metadata?.[9] || null, // entity health metadata index
+    startTime: Date.now(),
+    hitsDealt: 0,
+    damageDealt: 0,
+    damageTaken: 0,
+    startHealth: bot.health,
+  };
 
   combatInterval = setInterval(() => {
     const target = bot.entities[mob.id];
     if (!target || !target.position) {
-      logEvent('combat_ended', { reason: 'target_gone', target: mob.name });
+      logEvent('combat_ended', { reason: 'target_gone', target: mob.name, hitsDealt: combatState.hitsDealt, elapsed: Math.floor((Date.now() - combatState.startTime) / 1000) });
       stopCombat(bot);
       return;
+    }
+
+    // Update target health tracking
+    const targetHealth = target.metadata?.[9];
+    if (targetHealth !== undefined && targetHealth !== null) {
+      combatState.targetHealth = targetHealth;
     }
 
     const distance = bot.entity.position.distanceTo(target.position);
@@ -26,9 +85,14 @@ function startCombat(bot, mob) {
     }
     if (distance < 4) {
       bot.attack(target);
+      combatState.hitsDealt++;
     }
+
+    // Track damage taken
+    combatState.damageTaken = Math.max(0, combatState.startHealth - bot.health);
+
     if (bot.health < 6) {
-      logEvent('combat_retreat', { health: bot.health, reason: 'low_health' });
+      logEvent('combat_retreat', { health: bot.health, reason: 'low_health', hitsDealt: combatState.hitsDealt, damageTaken: combatState.damageTaken });
       stopCombat(bot);
       const fleeX = bot.entity.position.x + (bot.entity.position.x - target.position.x) * 2;
       const fleeZ = bot.entity.position.z + (bot.entity.position.z - target.position.z) * 2;
@@ -42,17 +106,26 @@ function stopCombat(bot) {
     clearInterval(combatInterval);
     combatInterval = null;
   }
+  resetCombatState();
   clearCurrentAction();
   bot.pathfinder.setGoal(null);
 }
 
 async function attack(bot, cmd) {
   const targetType = (cmd.target || '').toLowerCase();
-  const hostileTypes = ['zombie', 'skeleton', 'creeper', 'spider', 'enderman', 'witch', 'pillager'];
 
+  // Filter: any entity that isn't the bot, a player, or clutter — mineflayer uses 'mob' for all mobs
   const candidates = Object.values(bot.entities)
-    .filter(e => e.type === 'mob' || e.type === 'hostile')
-    .filter(e => e.position && bot.entity.position.distanceTo(e.position) < 32);
+    .filter(e => {
+      if (e === bot.entity || !e.position) return false;
+      if (e.type === 'player') return false;
+      // Accept 'mob' type (mineflayer's actual type for mobs) and also check by name
+      if (e.type === 'mob') return true;
+      // Some entities might have a known hostile name without proper type
+      const name = (e.name || '').toLowerCase();
+      return HOSTILE_MOBS.includes(name);
+    })
+    .filter(e => bot.entity.position.distanceTo(e.position) < 32);
 
   let mob;
   if (targetType) {
@@ -61,7 +134,7 @@ async function attack(bot, cmd) {
       .sort((a, b) => bot.entity.position.distanceTo(a.position) - bot.entity.position.distanceTo(b.position))[0];
   } else {
     mob = candidates
-      .filter(e => hostileTypes.includes(e.name?.toLowerCase()))
+      .filter(e => HOSTILE_MOBS.includes(e.name?.toLowerCase()))
       .sort((a, b) => bot.entity.position.distanceTo(a.position) - bot.entity.position.distanceTo(b.position))[0];
   }
 
@@ -95,7 +168,7 @@ async function shoot(bot, cmd) {
     if (player) target = player.entity;
     if (!target) {
       target = Object.values(bot.entities)
-        .filter(e => (e.type === 'mob' || e.type === 'hostile') && e.name?.toLowerCase().includes(targetName))
+        .filter(e => e.type === 'mob' && e.name?.toLowerCase().includes(targetName))
         .filter(e => e.position && bot.entity.position.distanceTo(e.position) < 64)
         .sort((a, b) => bot.entity.position.distanceTo(a.position) - bot.entity.position.distanceTo(b.position))[0];
     }
@@ -167,4 +240,4 @@ async function blockShield(bot, cmd) {
   }, 5000);
 }
 
-module.exports = { attack, shoot, blockShield, stopCombat };
+module.exports = { attack, shoot, blockShield, stopCombat, getCombatState };

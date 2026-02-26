@@ -145,6 +145,7 @@ openclaw-minecraft-plugin/
 
 ## Documentation
 
+- [AGENT-QUICK-REFERENCE.md](docs/AGENT-QUICK-REFERENCE.md) - **Start here** — decision flowchart, command cheat sheet, error recovery, workflow examples
 - [INTERFACE.md](docs/INTERFACE.md) - Complete state, events, and commands API reference
 - [DEPLOYMENT.md](docs/DEPLOYMENT.md) - OpenClaw integration patterns
 - [NEW-AGENT-GUIDE.md](docs/NEW-AGENT-GUIDE.md) - Step-by-step deployment guide

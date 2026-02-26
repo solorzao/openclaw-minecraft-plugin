@@ -53,7 +53,14 @@ async function sleep(bot, cmd) {
   const time = bot.time.timeOfDay;
   const isNight = time >= 12541 && time <= 23458;
   if (!isNight) {
-    logEvent('command_result', { commandId: cmd.id, success: false, detail: 'Not night time' });
+    const ticksUntilNight = time < 12541 ? 12541 - time : (24000 - time) + 12541;
+    const secondsUntilNight = Math.floor(ticksUntilNight / 20);
+    logEvent('command_result', {
+      commandId: cmd.id, success: false,
+      detail: `Not night time (current: ${time}, night starts at 12541, ~${secondsUntilNight}s away)`,
+      timeOfDay: time,
+      ticksUntilNight,
+    });
     return;
   }
 
@@ -172,18 +179,37 @@ async function trade(bot, cmd) {
       return;
     }
 
-    const buyIndex = cmd.index || 0;
-    if (buyIndex >= 0 && buyIndex < trades.trades.length) {
+    // If no index provided or index is out of range, list all trades with details
+    const buyIndex = cmd.index;
+    if (buyIndex === undefined || buyIndex === null || buyIndex >= trades.trades.length) {
+      const tradeList = trades.trades.map((t, i) => ({
+        index: i,
+        input1: t.inputItem1 ? { name: t.inputItem1.name, count: t.inputItem1.count } : null,
+        input2: t.inputItem2 ? { name: t.inputItem2.name, count: t.inputItem2.count } : null,
+        output: t.outputItem ? { name: t.outputItem.name, count: t.outputItem.count } : null,
+        disabled: t.tradeDisabled || false,
+        uses: t.nbTradeUses || 0,
+        maxUses: t.maximumNbTradeUses || 0,
+      }));
+      trades.close();
+      logEvent('command_result', {
+        commandId: cmd.id, success: true,
+        detail: `${tradeList.length} trades available`,
+        trades: tradeList,
+      });
+    } else {
       const t = trades.trades[buyIndex];
       const hasInput = bot.inventory.items().find(i => i.name === t.inputItem1?.name);
       if (hasInput) {
         await trades.trade(buyIndex, 1);
         logEvent('command_result', { commandId: cmd.id, success: true, detail: `Traded for ${t.outputItem?.name}` });
       } else {
-        logEvent('command_result', { commandId: cmd.id, success: false, detail: `Missing ${t.inputItem1?.name}` });
+        logEvent('command_result', {
+          commandId: cmd.id, success: false,
+          detail: `Missing ${t.inputItem1?.name} (need ${t.inputItem1?.count || 1})`,
+          required: t.inputItem1 ? { name: t.inputItem1.name, count: t.inputItem1.count } : null,
+        });
       }
-    } else {
-      logEvent('command_result', { commandId: cmd.id, success: true, detail: `${trades.trades.length} trades available` });
     }
     trades.close();
   } catch (err) {

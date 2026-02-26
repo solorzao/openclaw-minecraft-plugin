@@ -187,6 +187,10 @@ See `references/bot-commands.md` for:
 - Response file schema
 - Optional autonomous bot features
 
+See `scripts/bot-monitor.sh` for:
+- Example generic monitoring loop (bash implementation)
+- How to detect new messages and track duplicates
+
 ## Troubleshooting
 
 **Monitor not detecting chat?**

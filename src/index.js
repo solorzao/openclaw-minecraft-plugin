@@ -61,20 +61,23 @@ function createBot() {
   bot.on('spawn', () => {
     console.log(`${bot.username} spawned at ${bot.entity.position.floored()}`);
 
+    // Always re-initialize movements (needed after respawn too)
     const movements = new Movements(bot);
     movements.allowParkour = true;
-    movements.canDig = false;   // don't dig without tools, wastes time
-    movements.allow1by1towers = true; // pillar up to reach higher ground
+    movements.canDig = false;
+    movements.allow1by1towers = true;
     movements.allowFreeMotion = false;
-    movements.scafoldingBlocks = []; // don't use inventory blocks for scaffolding
+    movements.scafoldingBlocks = [];
     bot.pathfinder.setMovements(movements);
 
+    const isRespawn = spawned;
     logEvent('spawn', {
       position: {
         x: Math.floor(bot.entity.position.x),
         y: Math.floor(bot.entity.position.y),
         z: Math.floor(bot.entity.position.z),
       },
+      isRespawn,
     });
 
     // Only start intervals on first spawn (not on respawn after death)
@@ -112,8 +115,14 @@ function createBot() {
   });
 
   bot.on('death', () => {
-    logEvent('death', {});
-    console.log('Bot died!');
+    const pos = bot.entity?.position;
+    const deathData = pos ? {
+      position: { x: Math.floor(pos.x), y: Math.floor(pos.y), z: Math.floor(pos.z) },
+    } : {};
+    logEvent('death', deathData);
+    console.log('Bot died!', pos ? `at ${pos.floored()}` : '');
+    // Clear any active action on death
+    require('./state').clearCurrentAction();
   });
 
   bot.on('wake', () => {
@@ -170,5 +179,20 @@ function createBot() {
     }, RECONNECT_DELAY_MS);
   });
 }
+
+// Prevent unhandled promise rejections from crashing the bot
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled rejection:', err?.message || err);
+  try { logEvent('error', { message: `Unhandled rejection: ${err?.message || err}` }); } catch (e) {}
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err?.message || err);
+  try { logEvent('error', { message: `Uncaught exception: ${err?.message || err}` }); } catch (e) {}
+  // For truly fatal errors, exit and let the process manager restart
+  if (err?.message?.includes('FATAL') || err?.code === 'ERR_SOCKET_CLOSED') {
+    process.exit(1);
+  }
+});
 
 createBot();

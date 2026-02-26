@@ -1,6 +1,10 @@
 const { STATE_FILE } = require('./config');
 const { safeWrite } = require('./events');
-const { getNearbyPlayers, getNearbyEntities, getNearbyBlocks, getLightLevel, getInventory, getTimePhase } = require('./perception');
+const {
+  getNearbyPlayers, getNearbyEntities, getNearbyBlocks, getNotableBlocks,
+  getLightLevel, getInventory, getEquipment, getArmorRating, getInventoryStats,
+  getDimension, getTimePhase,
+} = require('./perception');
 
 let currentAction = null;
 let lastHealth = null;
@@ -57,23 +61,30 @@ function buildState(bot) {
       health,
       healthTrend,
       food: bot.food,
+      saturation: bot.foodSaturation || 0,
       experience: {
         level: bot.experience.level,
         points: bot.experience.points,
       },
       isInWater: bot.entity.isInWater,
       isSleeping: bot.isSleeping,
+      isOnFire: bot.entity.isOnFire || false,
       gameMode: bot.game.gameMode,
+      dimension: getDimension(bot),
       biome,
       weather,
       lightLevel: getLightLevel(bot),
     },
+    equipment: getEquipment(bot),
+    armor: getArmorRating(bot),
     inventory: getInventory(bot),
+    inventoryStats: getInventoryStats(bot),
     nearbyEntities: deduplicateEntities([
       ...getNearbyPlayers(bot),
       ...getNearbyEntities(bot),
     ]),
     nearbyBlocks: getNearbyBlocks(bot),
+    notableBlocks: getNotableBlocks(bot),
     time: {
       timeOfDay: bot.time.timeOfDay,
       phase: getTimePhase(bot),

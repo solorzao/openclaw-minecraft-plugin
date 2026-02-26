@@ -24,17 +24,42 @@ Written every second to `data/state.json`. This is the primary way to observe th
   "bot": {
     "position": { "x": -27, "y": 67, "z": -139 },
     "health": 17.2,
+    "healthTrend": "stable",
     "food": 14,
+    "saturation": 3.5,
     "experience": { "level": 5, "points": 42 },
     "isInWater": false,
     "isSleeping": false,
-    "gameMode": "survival"
+    "isOnFire": false,
+    "gameMode": "survival",
+    "dimension": "overworld",
+    "biome": "plains",
+    "weather": "clear",
+    "lightLevel": 15
+  },
+  "equipment": {
+    "hand": { "name": "iron_pickaxe", "count": 1 },
+    "offHand": null,
+    "head": { "name": "iron_helmet", "count": 1 },
+    "chest": { "name": "iron_chestplate", "count": 1 },
+    "legs": null,
+    "feet": null
+  },
+  "armor": {
+    "pieces": ["iron_helmet", "iron_chestplate"],
+    "totalProtection": 8
   },
   "inventory": [
     { "name": "iron_pickaxe", "count": 1, "slot": 36 },
     { "name": "cobblestone", "count": 64, "slot": 37 },
     { "name": "bread", "count": 12, "slot": 38 }
   ],
+  "inventoryStats": {
+    "usedSlots": 3,
+    "totalSlots": 36,
+    "freeSlots": 33,
+    "totalItems": 77
+  },
   "nearbyEntities": [
     { "name": "Wookiee_23", "type": "player", "distance": 5, "position": { "x": -31, "y": 67, "z": -142 } },
     { "name": "zombie", "type": "hostile", "distance": 12, "position": { "x": -15, "y": 67, "z": -140 } },
@@ -46,6 +71,10 @@ Written every second to `data/state.json`. This is the primary way to observe th
     "stone": 18,
     "oak_log": 3
   },
+  "notableBlocks": [
+    { "name": "chest", "position": { "x": -25, "y": 67, "z": -137 }, "distance": 3 },
+    { "name": "crafting_table", "position": { "x": -30, "y": 67, "z": -140 }, "distance": 4 }
+  ],
   "time": {
     "timeOfDay": 6000,
     "phase": "day"
@@ -60,14 +89,25 @@ Written every second to `data/state.json`. This is the primary way to observe th
 |-------|-------------|
 | `bot.position` | Current coordinates (floored integers) |
 | `bot.health` | HP (0-20) |
+| `bot.healthTrend` | `stable`, `healing`, or `taking_damage` |
 | `bot.food` | Hunger bar (0-20) |
+| `bot.saturation` | Saturation level (hidden hunger buffer) |
 | `bot.experience` | Level and points |
 | `bot.isInWater` | Whether bot is submerged |
 | `bot.isSleeping` | Whether bot is in a bed |
+| `bot.isOnFire` | Whether bot is on fire |
 | `bot.gameMode` | survival, creative, adventure, spectator |
+| `bot.dimension` | `overworld`, `nether`, or `the_end` |
+| `bot.biome` | Current biome name |
+| `bot.weather` | `clear`, `rain`, or `thunder` |
+| `bot.lightLevel` | Block light level at bot position |
+| `equipment` | Currently equipped items in each slot (hand, offHand, head, chest, legs, feet) |
+| `armor` | Armor pieces worn and total protection rating |
 | `inventory` | All items with name, count, slot |
+| `inventoryStats` | Used/free slots, total item count |
 | `nearbyEntities` | Up to 20 entities within 32 blocks, sorted by distance. Type is `player`, `hostile`, or `passive` |
-| `nearbyBlocks` | Block type counts in a 9x5x9 area around the bot |
+| `nearbyBlocks` | Block type counts in a 17x9x17 area around the bot |
+| `notableBlocks` | Up to 30 notable blocks within 33 blocks (chests, ores, workstations, spawners, portals) |
 | `time.timeOfDay` | Game ticks (0-24000) |
 | `time.phase` | `day`, `sunset`, or `night` |
 | `currentAction` | Current action the bot is performing, or null |
@@ -93,7 +133,7 @@ Note: event data fields are flat (not nested under a `data` key).
 | `whisper` | `username`, `message` | Player whispered to bot |
 | `danger` | `reason`, `health`, `food` | Low health detected (health < 10) |
 | `hurt` | `health` | Bot took damage |
-| `death` | _(none)_ | Bot died |
+| `death` | `position` | Bot died (position logged for item recovery) |
 | `woke_up` | _(none)_ | Bot woke from bed |
 | `goal_reached` | _(none)_ | Pathfinder reached destination |
 | `path_failed` | `status` | Pathfinding failed (`noPath`, `timeout`, `stuck`) |
@@ -357,6 +397,38 @@ Hands: `main`, `off`
 { "action": "manage_inventory" }
 ```
 
+### Utility
+
+#### `scan` - Detailed area survey
+```json
+{ "action": "scan", "radius": 32 }
+```
+Returns: top blocks, notable blocks, entities, food supply, hostile count via event.
+
+#### `find_blocks` - Search for specific blocks
+```json
+{ "action": "find_blocks", "blockType": "diamond_ore", "maxDistance": 64, "count": 10 }
+```
+Returns: list of matching blocks with positions and distances via event.
+
+#### `where_am_i` - Quick status check
+```json
+{ "action": "where_am_i" }
+```
+Returns: position, dimension, biome, health, food, time, weather via event.
+
+#### `list_recipes` - Check craftable items
+```json
+{ "action": "list_recipes", "item": "iron_pickaxe" }
+```
+With `item`: shows recipe ingredients. Without: lists all currently craftable items.
+
+#### `goto_block` - Navigate to nearest block of a type
+```json
+{ "action": "goto_block", "blockType": "crafting_table", "maxDistance": 64 }
+```
+Finds and pathfinds to the nearest matching block.
+
 ### Goals
 
 #### `goal` - High-level goal shortcuts
@@ -373,7 +445,24 @@ Goals: `gather_wood`, `explore`
 |----------|-------|-------------|
 | State broadcast | 1000ms | Bot writes `state.json` |
 | Command poll | 500ms | Bot reads `commands.json` |
-| Survival tick | 2000ms | Auto-eat and water escape checks |
+| Survival tick | 1000ms | Auto-eat, water escape, threat flee, auto-equip armor |
+
+---
+
+## Autonomous Behaviors
+
+The bot automatically performs these actions without commands:
+
+| Behavior | Trigger | Description |
+|----------|---------|-------------|
+| Auto-eat | `food < 6` | Eats best available food from inventory |
+| Water escape | `isInWater` | Pathfinds to nearest land block |
+| Threat flee | Hostile mob nearby | Runs from creepers (16 blocks), other hostiles (12 blocks) |
+| Auto-equip armor | Every 10s | Equips best available armor pieces |
+| Stuck detection | No movement for 5s | Retries pathfinding or wanders randomly |
+| Smart sprint | Following player | Sprints when far, walks when close |
+| Auto-tool | Digging blocks | Selects best tool (pickaxe/axe/shovel) for the block |
+| Auto-weapon | Combat | Equips best available weapon |
 
 ---
 

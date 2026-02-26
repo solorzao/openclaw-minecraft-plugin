@@ -22,6 +22,7 @@
           "till", "plant", "harvest", "farm",
           "chat", "equip", "eat", "sleep", "activate", "fish", "use_on", "trade", "brew", "enchant",
           "store_items", "retrieve_items", "manage_inventory",
+          "scan", "find_blocks", "where_am_i", "list_recipes", "goto_block",
           "goal"
         ],
         "description": "Action to execute"
@@ -290,6 +291,43 @@
           "properties": {
             "items": { "type": "array", "items": { "type": "string" }, "description": "Item name filters. If omitted, retrieves everything." }
           }
+        }
+      },
+      {
+        "if": { "properties": { "action": { "const": "scan" } } },
+        "then": {
+          "properties": {
+            "radius": { "type": "integer", "minimum": 8, "maximum": 32, "default": 32, "description": "Scan radius in blocks" }
+          }
+        }
+      },
+      {
+        "if": { "properties": { "action": { "const": "find_blocks" } } },
+        "then": {
+          "properties": {
+            "blockType": { "type": "string", "description": "Block name to search for (e.g., diamond_ore, chest)" },
+            "maxDistance": { "type": "integer", "minimum": 1, "maximum": 128, "default": 64 },
+            "count": { "type": "integer", "minimum": 1, "maximum": 50, "default": 10 }
+          },
+          "required": ["action", "blockType"]
+        }
+      },
+      {
+        "if": { "properties": { "action": { "const": "list_recipes" } } },
+        "then": {
+          "properties": {
+            "item": { "type": "string", "description": "Item name. If omitted, lists all craftable items from current inventory." }
+          }
+        }
+      },
+      {
+        "if": { "properties": { "action": { "const": "goto_block" } } },
+        "then": {
+          "properties": {
+            "blockType": { "type": "string", "description": "Block name to navigate to (e.g., crafting_table, chest)" },
+            "maxDistance": { "type": "integer", "minimum": 1, "maximum": 128, "default": 64 }
+          },
+          "required": ["action", "blockType"]
         }
       },
       {

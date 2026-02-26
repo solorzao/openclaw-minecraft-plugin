@@ -18,6 +18,45 @@ const ORE_PRIORITY = {
 
 const FOOD_ANIMALS = ['cow', 'pig', 'chicken', 'sheep', 'rabbit'];
 
+// Tool selection: maps block material to the best tool category
+const TOOL_FOR_MATERIAL = {
+  rock: 'pickaxe', stone: 'pickaxe', ore: 'pickaxe', metal: 'pickaxe',
+  wood: 'axe', plant: 'axe',
+  dirt: 'shovel', sand: 'shovel', gravel: 'shovel', clay: 'shovel', snow: 'shovel', soul: 'shovel',
+  web: 'sword', wool: 'shears',
+};
+
+// Tool tiers in descending quality
+const TOOL_TIERS = ['netherite', 'diamond', 'iron', 'stone', 'golden', 'wooden'];
+
+function selectBestTool(bot, block) {
+  if (!block) return null;
+  const blockName = block.name.toLowerCase();
+
+  // Determine what tool type is needed
+  let toolType = null;
+  for (const [keyword, tool] of Object.entries(TOOL_FOR_MATERIAL)) {
+    if (blockName.includes(keyword)) { toolType = tool; break; }
+  }
+  // Fallback heuristics
+  if (!toolType) {
+    if (blockName.includes('log') || blockName.includes('plank') || blockName.includes('wood')) toolType = 'axe';
+    else if (blockName.includes('ore') || blockName.includes('stone') || blockName.includes('brick')
+      || blockName.includes('obsidian') || blockName.includes('concrete') || blockName.includes('terracotta')) toolType = 'pickaxe';
+    else if (blockName.includes('dirt') || blockName.includes('grass') || blockName.includes('sand')
+      || blockName.includes('gravel') || blockName.includes('clay') || blockName.includes('soul')
+      || blockName.includes('mycelium') || blockName.includes('podzol') || blockName.includes('mud')) toolType = 'shovel';
+  }
+  if (!toolType) return null;
+
+  // Find the best tier of this tool type in inventory
+  for (const tier of TOOL_TIERS) {
+    const tool = bot.inventory.items().find(i => i.name === `${tier}_${toolType}`);
+    if (tool) return tool;
+  }
+  return null;
+}
+
 let huntInterval = null;
 
 async function dig(bot, cmd) {
@@ -41,9 +80,13 @@ async function dig(bot, cmd) {
   }
 
   try {
+    // Auto-select best tool for the block
+    const bestTool = selectBestTool(bot, block);
+    if (bestTool) await bot.equip(bestTool, 'hand');
+
     setCurrentAction({ type: 'dig', blockType: block.name });
     await bot.dig(block);
-    logEvent('command_result', { commandId: cmd.id, success: true, detail: `Broke ${block.name}` });
+    logEvent('command_result', { commandId: cmd.id, success: true, detail: `Broke ${block.name}${bestTool ? ' with ' + bestTool.name : ''}` });
     clearCurrentAction();
   } catch (err) {
     logEvent('command_result', { commandId: cmd.id, success: false, detail: err.message });
@@ -55,8 +98,16 @@ async function mineResource(bot, cmd) {
   const resourceType = cmd.resource || cmd.target;
   const count = cmd.count || 16;
 
-  const blockNames = Object.keys(ORE_PRIORITY).filter(n => n.includes(resourceType.toLowerCase()));
-  if (resourceType === 'stone') blockNames.push('stone', 'cobblestone', 'deepslate');
+  const resLower = resourceType.toLowerCase();
+  const blockNames = Object.keys(ORE_PRIORITY).filter(n => n.includes(resLower));
+  if (resLower === 'stone') blockNames.push('stone', 'cobblestone', 'deepslate');
+  if (resLower === 'wood' || resLower === 'log') {
+    blockNames.push('oak_log', 'spruce_log', 'birch_log', 'jungle_log', 'acacia_log', 'dark_oak_log',
+      'mangrove_log', 'cherry_log', 'crimson_stem', 'warped_stem');
+  }
+  if (resLower === 'sand') blockNames.push('sand', 'red_sand');
+  if (resLower === 'gravel') blockNames.push('gravel');
+  if (resLower === 'clay') blockNames.push('clay');
 
   const targetBlock = bot.findBlock({
     matching: b => blockNames.includes(b.name) || b.name === resourceType,
@@ -71,9 +122,10 @@ async function mineResource(bot, cmd) {
   setCurrentAction({ type: 'mining', resource: resourceType, count });
   logEvent('command_result', { commandId: cmd.id, success: true, detail: `Mining ${resourceType}` });
 
-  const pickaxes = ['netherite_pickaxe', 'diamond_pickaxe', 'iron_pickaxe', 'stone_pickaxe', 'wooden_pickaxe'];
-  const pickaxe = bot.inventory.items().find(i => pickaxes.includes(i.name));
-  if (pickaxe) await bot.equip(pickaxe, 'hand');
+  // Auto-select best pickaxe (or appropriate tool)
+  const bestTool = selectBestTool(bot, targetBlock) ||
+    bot.inventory.items().find(i => i.name.includes('pickaxe'));
+  if (bestTool) await bot.equip(bestTool, 'hand');
 
   let mined = 0;
   while (mined < count) {
@@ -99,7 +151,7 @@ async function mineResource(bot, cmd) {
             const floor = bot.blockAt(bot.entity.position.offset(0, -1, 0));
             if (floor && floor.name !== 'air') await bot.placeBlock(floor, new Vec3(0, 1, 0));
           } catch (e) {}
-          if (pickaxe) await bot.equip(pickaxe, 'hand');
+          if (bestTool) await bot.equip(bestTool, 'hand');
         }
       }
       await new Promise(r => setTimeout(r, 500));
@@ -125,36 +177,77 @@ async function findFood(bot, cmd) {
   setCurrentAction({ type: 'hunting', target: target.name });
   logEvent('command_result', { commandId: cmd.id, success: true, detail: `Hunting ${target.name}` });
 
+  // Equip best weapon
+  const weapons = ['netherite_sword', 'diamond_sword', 'iron_sword', 'stone_sword', 'golden_sword', 'wooden_sword'];
+  const weapon = bot.inventory.items().find(i => weapons.includes(i.name));
+  if (weapon) await bot.equip(weapon, 'hand').catch(() => {});
+
   if (huntInterval) clearInterval(huntInterval);
+  const huntStart = Date.now();
+  const MAX_HUNT_MS = 30000; // 30 second timeout
+
   huntInterval = setInterval(async () => {
     const t = bot.entities[target.id];
-    if (!t || !t.position) {
-      clearInterval(huntInterval); huntInterval = null; clearCurrentAction();
+    const elapsed = Date.now() - huntStart;
+
+    // Target gone or timeout
+    if (!t || !t.position || elapsed > MAX_HUNT_MS) {
+      clearInterval(huntInterval); huntInterval = null;
+      clearCurrentAction();
+      logEvent('hunt_ended', {
+        target: target.name,
+        reason: !t ? 'target_killed' : 'timeout',
+        elapsed: Math.floor(elapsed / 1000),
+      });
+      // Briefly pause then try to collect nearby dropped items
+      await new Promise(r => setTimeout(r, 500));
+      const drops = Object.values(bot.entities)
+        .filter(e => e.type === 'object' && e.objectType === 'Item')
+        .filter(e => e.position && bot.entity.position.distanceTo(e.position) < 8);
+      for (const drop of drops) {
+        try {
+          await bot.pathfinder.goto(new GoalNear(drop.position.x, drop.position.y, drop.position.z, 1));
+        } catch (e) {}
+      }
       return;
     }
+
     const distance = bot.entity.position.distanceTo(t.position);
     if (distance > 3) bot.pathfinder.setGoal(new GoalFollow(t, 2), true);
     if (distance < 4) {
-      const weapons = ['diamond_sword', 'iron_sword', 'stone_sword', 'wooden_sword'];
-      const weapon = bot.inventory.items().find(i => weapons.includes(i.name));
-      if (weapon) await bot.equip(weapon, 'hand').catch(() => {});
       bot.attack(t);
     }
   }, 300);
 }
 
 async function collectItems(bot, cmd) {
+  const radius = cmd.radius || 16;
   const items = Object.values(bot.entities)
     .filter(e => e.type === 'object' && e.objectType === 'Item')
-    .filter(e => e.position && bot.entity.position.distanceTo(e.position) < 10);
+    .filter(e => e.position && bot.entity.position.distanceTo(e.position) < radius)
+    .sort((a, b) => bot.entity.position.distanceTo(a.position) - bot.entity.position.distanceTo(b.position));
+
+  if (items.length === 0) {
+    logEvent('command_result', { commandId: cmd.id, success: false, detail: 'No items on the ground nearby' });
+    return;
+  }
+
+  setCurrentAction({ type: 'collecting', count: items.length });
+  let collected = 0;
 
   for (const item of items) {
-    if (item.position) {
-      bot.pathfinder.setGoal(new GoalNear(item.position.x, item.position.y, item.position.z, 0), false);
-      await new Promise(r => setTimeout(r, 2000));
+    if (!item.position || !bot.entities[item.id]) continue;
+    try {
+      await bot.pathfinder.goto(new GoalNear(item.position.x, item.position.y, item.position.z, 1));
+      collected++;
+      await new Promise(r => setTimeout(r, 300));
+    } catch (e) {
+      // Item may have despawned or become unreachable
     }
   }
-  logEvent('command_result', { commandId: cmd.id, success: true, detail: `Collecting ${items.length} items` });
+
+  clearCurrentAction();
+  logEvent('command_result', { commandId: cmd.id, success: collected > 0, detail: `Collected ${collected}/${items.length} items` });
 }
 
 async function drop(bot, cmd) {

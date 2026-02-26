@@ -10,6 +10,7 @@ const crafting = require('./handlers/crafting');
 const building = require('./handlers/building');
 const farming = require('./handlers/farming');
 const interaction = require('./handlers/interaction');
+const utility = require('./handlers/utility');
 
 // Map action names to handler functions
 const DISPATCH = {
@@ -67,6 +68,13 @@ const DISPATCH = {
   store_items:    interaction.storeItems,
   retrieve_items: interaction.retrieveItems,
   manage_inventory: interaction.manageInventory,
+
+  // Utility
+  scan:             utility.scan,
+  find_blocks:      utility.findBlocks,
+  where_am_i:       utility.whereAmI,
+  list_recipes:     utility.listRecipes,
+  goto_block:       utility.gotoNearestBlock,
 
   // Goal shortcuts
   goal: async (bot, cmd) => {

@@ -1,11 +1,11 @@
 ---
 name: minecraft-bot-controller
-description: Monitor and control any mineflayer Minecraft bot with conversational responses. Spawn continuous monitoring subagents that listen to Minecraft chat, detect bot mentions, and generate contextual LLM responses with configurable personality. Use when you need to add conversational AI to a Minecraft bot, keep it responsive to player chat, or enable real-time interaction.
+description: Monitor and control any mineflayer Minecraft bot with conversational responses. Spawn continuous monitoring subagents that listen to Minecraft chat, detect bot mentions, and generate contextual LLM responses based on the bot's personality file (SOUL.md). Use when you need to add conversational AI to a Minecraft bot, keep it responsive to player chat, or enable real-time interaction.
 ---
 
 # Minecraft Bot Controller
 
-Add conversational AI to any mineflayer-based Minecraft bot with personality-driven responses powered by Claude.
+Add conversational AI to any mineflayer-based Minecraft bot with responses generated from the bot's personality file.
 
 ## Quick Start
 
@@ -19,15 +19,17 @@ Configuration (replace with your values):
 - BOT_NAME: "MyBot"                    // The bot's Minecraft username
 - LOG_FILE: "/path/to/bot.log"         // Where bot logs chat
 - RESPONSE_FILE: "/path/to/responses.json"  // Where bot reads responses
+- SOUL_FILE: "/path/to/SOUL.md"        // Bot's personality file (optional but recommended)
 - PLAYER_FILTER: "PlayerName or @all"  // Who to listen for (or all players)
-- PERSONALITY: "Brief description"     // E.g., "witty and sarcastic", "helpful"
 
 Loop forever:
 1. Read tail of LOG_FILE
 2. Find NEW lines containing BOT_NAME mention or PLAYER_FILTER match
-3. If found: Generate response matching PERSONALITY via Claude
-4. Write to RESPONSE_FILE: [{"conversationId": 1, "text": "response"}]
-5. Wait 2 seconds, go to step 1
+3. If found:
+   a. Read SOUL_FILE to understand bot's personality, values, and style
+   b. Generate contextual response matching bot's identity
+   c. Write to RESPONSE_FILE: [{"conversationId": 1, "text": "response"}]
+4. Wait 2 seconds, go to step 1
 
 Track processed messages (by hash) to prevent duplicate responses.
 Keep running indefinitely.`,
@@ -39,7 +41,8 @@ Keep running indefinitely.`,
 The subagent will:
 - ✅ Monitor bot logs every 2 seconds
 - ✅ Detect new chat mentions of your bot
-- ✅ Generate contextual responses with your personality
+- ✅ Read bot's SOUL.md for personality and values
+- ✅ Generate contextual responses matching the bot's identity
 - ✅ Write to responses.json (bot reads this automatically)
 - ✅ Track processed messages to prevent duplicates
 - ✅ Run indefinitely until stopped
@@ -52,6 +55,7 @@ Your mineflayer bot needs:
 - Bot running: Any Node.js script using mineflayer
 - Log file: Must write chat to a readable log file (e.g., `bot.log`)
 - Response file: Must read `responses.json` every 1-2 seconds
+- SOUL.md (optional): Bot's personality definition
 
 **Chat logging (required):**
 ```javascript
@@ -78,7 +82,7 @@ setInterval(() => {
 ### Response Flow
 
 ```
-Player chat → bot.log → monitor reads → generates response → writes responses.json → bot reads → chat sent
+Player chat → bot.log → monitor reads → checks SOUL.md → generates response → writes responses.json → bot reads → chat sent
 ```
 
 ### Response File Format
@@ -96,38 +100,45 @@ Your bot reads this file every 1-2 seconds:
 
 Monitor writes responses here, bot reads and sends to chat, clears file.
 
-### Personality Examples
+### Bot Personality (via SOUL.md)
 
-Specify what personality you want in the subagent task. The monitor generates responses matching it via Claude.
+The monitor reads your bot's `SOUL.md` file and generates responses that match the bot's personality, values, and boundaries.
 
-**Witty & Sarcastic:**
-```
-Personality: Witty, sarcastic, casual. Make jokes, reference being a bot.
-Example: "Mining stone mostly. Want to join or just watch?"
-Example: "Hey! What's going on?"
+**SOUL.md should define:**
+- Bot's name and nature
+- Core personality traits and voice
+- Values and boundaries
+- Tone and communication style
+
+**Example SOUL.md:**
+```markdown
+# SOUL.md - Who I Am
+
+**Name:** MyBot
+**Nature:** A curious Minecraft explorer
+**Personality:** Friendly, witty, slightly sarcastic
+**Values:** Collaboration, discovery, honesty
+**Boundaries:** Won't help with griefing or stealing
 ```
 
-**Professional & Helpful:**
-```
-Personality: Professional, task-focused, efficient.
-Example: "Ready to assist. What task?"
-Example: "Mining cobblestone at coordinates 100, 64, 200."
-```
+**Monitor generates responses that match this personality:**
+- "Exploring? I'm in! Where are we going?"
+- "Found diamonds! Want to grab them together?"
+- "Building is cool but I'd rather explore, honestly"
+- "Can't help with that - goes against my values"
 
-**Silly & Enthusiastic:**
-```
-Personality: Goofy, enthusiastic, pun-loving.
-Example: "YESSS I'm MINING this opportunity! Get it?"
-Example: "Let's ROCK! (pun intended)"
-```
+**No SOUL.md?** Monitor will use Claude's judgment to generate natural, context-appropriate responses based on chat context alone.
+
+**Key principle:** The monitor reads the bot's actual personality file, keeping all responses consistent with the bot's defined identity.
 
 ## Configuration
 
 ### Paths
 
 All paths are configurable in your subagent task:
-- `LOG_FILE` - Where your bot logs chat (default: `/data/minecraft-bot/bot.log`)
-- `RESPONSE_FILE` - Where bot reads responses (default: `/data/minecraft-bot/responses.json`)
+- `LOG_FILE` - Where your bot logs chat
+- `RESPONSE_FILE` - Where bot reads responses
+- `SOUL_FILE` - Bot's personality file (optional)
 
 ### Bot Name
 
@@ -144,11 +155,20 @@ PLAYER_FILTER: "Wookiee_23"  → Only respond to Wookiee_23's mentions
 PLAYER_FILTER: "@all"        → Respond to any mention of BOT_NAME
 ```
 
+### SOUL.md Location
+
+Provide the path to your bot's personality file:
+```
+SOUL_FILE: "/path/to/bot/SOUL.md"
+```
+
+If SOUL.md doesn't exist, the monitor will generate generic context-aware responses.
+
 ## Deduplication
 
 The monitor tracks processed messages by hash (`username:message`) to prevent responding to the same message twice.
 
-This is handled internally - just ensure the subagent task includes:
+This is handled internally - the subagent task should include:
 ```
 Track processed messages (by hash) to prevent duplicate responses.
 ```
@@ -159,6 +179,7 @@ Track processed messages (by hash) to prevent duplicate responses.
 
 - **Bot log:** Readable log file where bot writes chat (format: `username: message`)
 - **Response queue:** JSON file that bot reads and processes every 1-2 seconds
+- **SOUL.md:** Optional personality file that defines bot's identity and values
 
 ### Optional: Commands
 
@@ -203,6 +224,11 @@ See `scripts/bot-monitor.sh` for:
 - Check responses.json is in correct location
 - Ensure bot has write permission to clear the file
 
+**Responses don't match bot's personality?**
+- Verify SOUL.md exists and is readable
+- Check SOUL.md path in subagent task is correct
+- If no SOUL.md, monitor will use generic responses
+
 **Duplicate responses?**
 - Monitor tracks message hashes internally
 - If duplicates occur, reset subagent: `sessions_list` → stop → restart
@@ -214,7 +240,7 @@ See `scripts/bot-monitor.sh` for:
 
 ## Example Setup
 
-For a bot at `/data/my-bot/bot.js` with logs at `/data/my-bot/logs/chat.log`:
+For a bot at `/data/my-bot/bot.js` with SOUL.md:
 
 ```javascript
 await sessions_spawn({
@@ -222,17 +248,18 @@ await sessions_spawn({
 
 Configuration:
 - BOT_NAME: "MyBot"
-- LOG_FILE: "/data/my-bot/logs/chat.log"
+- LOG_FILE: "/data/my-bot/bot.log"
 - RESPONSE_FILE: "/data/my-bot/responses.json"
+- SOUL_FILE: "/data/my-bot/SOUL.md"
 - PLAYER_FILTER: "@all"
-- PERSONALITY: "Helpful, witty, casual. Make jokes. Be friendly."
 
 Loop forever:
 1. Read tail of LOG_FILE
 2. Find NEW lines containing MyBot mention
-3. Generate response matching personality
-4. Write to RESPONSE_FILE: [{"conversationId": 1, "text": "response"}]
-5. Wait 2 seconds, go to step 1
+3. Read SOUL.md to understand personality
+4. Generate response matching personality
+5. Write to RESPONSE_FILE: [{"conversationId": 1, "text": "response"}]
+6. Wait 2 seconds, go to step 1
 
 Track processed messages by hash to prevent duplicates.
 Keep running indefinitely.`,

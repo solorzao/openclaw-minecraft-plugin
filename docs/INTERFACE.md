@@ -79,7 +79,25 @@ Written every second to `data/state.json`. This is the primary way to observe th
     "timeOfDay": 6000,
     "phase": "day"
   },
-  "currentAction": null
+  "currentAction": null,
+  "pathfinding": {
+    "active": true,
+    "goalX": -50,
+    "goalZ": 120,
+    "distanceToGoal": 45
+  },
+  "survival": {
+    "isFleeing": false,
+    "isEscapingWater": false,
+    "isStuck": false,
+    "stuckTicks": 0,
+    "nearestThreat": { "name": "zombie", "distance": 15 },
+    "fleeInfo": null
+  },
+  "combat": null,
+  "notes": {
+    "base_location": { "value": "100 64 200", "updatedAt": "2026-02-25T19:00:00.000Z" }
+  }
 }
 ```
 
@@ -88,6 +106,8 @@ Written every second to `data/state.json`. This is the primary way to observe th
 | Field | Description |
 |-------|-------------|
 | `bot.position` | Current coordinates (floored integers) |
+| `bot.velocity` | Current velocity vector (x, y, z) - useful for detecting movement |
+| `bot.yaw` / `bot.pitch` | Look direction (radians) |
 | `bot.health` | HP (0-20) |
 | `bot.healthTrend` | `stable`, `healing`, or `taking_damage` |
 | `bot.food` | Hunger bar (0-20) |
@@ -101,16 +121,21 @@ Written every second to `data/state.json`. This is the primary way to observe th
 | `bot.biome` | Current biome name |
 | `bot.weather` | `clear`, `rain`, or `thunder` |
 | `bot.lightLevel` | Block light level at bot position |
+| `bot.effects` | Active potion/status effects (name, amplifier, duration in seconds) |
 | `equipment` | Currently equipped items in each slot (hand, offHand, head, chest, legs, feet) |
 | `armor` | Armor pieces worn and total protection rating |
 | `inventory` | All items with name, count, slot |
 | `inventoryStats` | Used/free slots, total item count |
-| `nearbyEntities` | Up to 20 entities within 32 blocks, sorted by distance. Type is `player`, `hostile`, or `passive` |
+| `nearbyEntities` | Up to 20 entities within 32 blocks. Includes `entityId`, `health`, `type` (`player`/`hostile`/`passive`) |
 | `nearbyBlocks` | Block type counts in a 17x9x17 area around the bot |
 | `notableBlocks` | Up to 30 notable blocks within 33 blocks (chests, ores, workstations, spawners, portals) |
 | `time.timeOfDay` | Game ticks (0-24000) |
 | `time.phase` | `day`, `sunset`, or `night` |
-| `currentAction` | Current action the bot is performing, or null |
+| `currentAction` | Current action with progress info (e.g. `{type: "mining", mined: 5, count: 16, progress: "5/16"}`) |
+| `pathfinding` | Current pathfinding status: `active`, goal coordinates, `distanceToGoal`. Null if idle |
+| `survival` | Survival system state: `isFleeing`, `isEscapingWater`, `isStuck`, `nearestThreat`, `fleeInfo` |
+| `combat` | Active combat info: `target`, `targetHealth`, `hitsDealt`, `damageTaken`, `elapsed`. Null if not fighting |
+| `notes` | Agent-saved persistent notes (key-value pairs saved via `set_note` command) |
 
 ---
 
@@ -140,16 +165,33 @@ Note: event data fields are flat (not nested under a `data` key).
 | `error` | `message` | Bot error |
 | `disconnect` | _(none)_ | Bot disconnected |
 | `kicked` | `reason` | Bot was kicked |
-| `command_result` | `commandId`, `success`, `detail` | Result of a command execution |
+| `command_received` | `commandId`, `action` | Command acknowledged (bot received it) |
+| `command_result` | `commandId`, `success`, `detail`, ... | Result of a command execution (may include structured data) |
+| `block_mined` | `block`, `mined`, `target`, `elapsed` | Progress update during mining |
+| `mining_complete` | `resource`, `mined`, `target`, `elapsed`, `stopReason` | Mining operation finished |
+| `tool_low_durability` | `tool`, `remaining` | Tool about to break |
+| `combat_ended` | `reason`, `target`, `hitsDealt`, `elapsed` | Combat finished |
+| `combat_retreat` | `health`, `reason`, `hitsDealt`, `damageTaken` | Retreating from combat |
+| `arrow_shot` | `target`, `distance` | Arrow fired at target |
+| `hunt_ended` | `target`, `reason`, `elapsed` | Hunting operation finished |
+| `smelting_started` | `item`, `count`, `expectedOutput` | Smelting begun |
+| `auto_equipped` | `item`, `slot` | Auto-equipped better armor |
 
 ### Command Result Correlation
 
-Every command you send with an `id` field will produce a `command_result` event:
+Every command you send with an `id` field will produce:
+1. A `command_received` event (immediate acknowledgment)
+2. A `command_result` event (when the command completes)
 
 ```json
-{ "id": 42, "timestamp": 1770592451200, "type": "command_result", "commandId": "cmd-1", "success": true, "detail": "Arrived at -50, 64, 120" }
-{ "id": 43, "timestamp": 1770592452300, "type": "command_result", "commandId": "cmd-2", "success": false, "detail": "No iron_ore in inventory" }
+{ "id": 42, "type": "command_received", "commandId": "cmd-1", "action": "craft" }
+{ "id": 43, "type": "command_result", "commandId": "cmd-1", "success": false,
+  "detail": "Missing materials for iron_pickaxe",
+  "missingMaterials": [{"item": "iron_ingot", "need": 3, "have": 1}, {"item": "stick", "need": 2, "have": 0}],
+  "requiresTable": true }
 ```
+
+Many commands now return **structured data** alongside the `detail` string. Check for fields like `missingMaterials`, `verify`, `scan`, `blocks`, `trades`, `container`, `itemsGained`, `notes`, etc.
 
 ---
 
@@ -428,6 +470,45 @@ With `item`: shows recipe ingredients. Without: lists all currently craftable it
 { "action": "goto_block", "blockType": "crafting_table", "maxDistance": 64 }
 ```
 Finds and pathfinds to the nearest matching block.
+
+#### `verify` - Check if an action is feasible before doing it
+```json
+{ "action": "verify", "check": "craft", "item": "iron_pickaxe" }
+{ "action": "verify", "check": "smelt", "item": "iron_ore" }
+{ "action": "verify", "check": "goto", "x": 100, "y": 64, "z": -50 }
+{ "action": "verify", "check": "attack", "target": "zombie" }
+{ "action": "verify", "check": "sleep" }
+{ "action": "verify", "check": "mine", "resource": "diamond_ore" }
+```
+Returns feasibility, reason, and details (missing materials, distance, target count, etc.) via event. **Use this before expensive operations to avoid wasted time.**
+
+#### `cancel` - Cancel the currently running action
+```json
+{ "action": "cancel" }
+```
+Stops pathfinding, clears combat, and resets all control states. Returns what was cancelled.
+
+#### `inspect_container` - Look inside a nearby container
+```json
+{ "action": "inspect_container" }
+{ "action": "inspect_container", "position": { "x": 100, "y": 64, "z": -50 } }
+```
+Returns: container type, all items inside, and free slots. Does not take any items. Supports chests, barrels, shulker boxes, hoppers, etc.
+
+#### `set_note` - Save a persistent note (survives restarts)
+```json
+{ "action": "set_note", "key": "base_location", "value": "100 64 200" }
+{ "action": "set_note", "key": "current_goal", "value": "Get diamond pickaxe" }
+{ "action": "set_note", "key": "old_note", "value": "" }
+```
+Notes are saved to `data/notes.json` and appear in `state.json` under the `notes` field. Set value to empty string to delete a note.
+
+#### `get_notes` - Retrieve saved notes
+```json
+{ "action": "get_notes" }
+{ "action": "get_notes", "key": "base_location" }
+```
+Returns all notes or a specific note by key.
 
 ### Goals
 

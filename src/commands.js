@@ -70,11 +70,16 @@ const DISPATCH = {
   manage_inventory: interaction.manageInventory,
 
   // Utility
-  scan:             utility.scan,
-  find_blocks:      utility.findBlocks,
-  where_am_i:       utility.whereAmI,
-  list_recipes:     utility.listRecipes,
-  goto_block:       utility.gotoNearestBlock,
+  scan:                utility.scan,
+  find_blocks:         utility.findBlocks,
+  where_am_i:          utility.whereAmI,
+  list_recipes:        utility.listRecipes,
+  goto_block:          utility.gotoNearestBlock,
+  verify:              utility.verify,
+  cancel:              utility.cancel,
+  inspect_container:   utility.inspectContainer,
+  set_note:            utility.setNote,
+  get_notes:           utility.getNotes,
 
   // Goal shortcuts
   goal: async (bot, cmd) => {
@@ -112,14 +117,26 @@ const DISPATCH = {
 async function executeCommand(bot, cmd) {
   const handler = DISPATCH[cmd.action];
   if (!handler) {
-    logEvent('command_result', { commandId: cmd.id, success: false, detail: `Unknown action: ${cmd.action}` });
+    const available = Object.keys(DISPATCH).join(', ');
+    logEvent('command_result', {
+      commandId: cmd.id, success: false,
+      detail: `Unknown action: ${cmd.action}`,
+      hint: `Available actions: ${available}`,
+    });
     return;
   }
 
   try {
+    // Log command acknowledgment so LLM knows the command was received
+    logEvent('command_received', { commandId: cmd.id, action: cmd.action });
     await handler(bot, cmd);
   } catch (err) {
-    logEvent('command_result', { commandId: cmd.id, success: false, detail: `Error: ${err.message}` });
+    logEvent('command_result', {
+      commandId: cmd.id, success: false,
+      detail: `Error: ${err.message}`,
+      action: cmd.action,
+      errorType: err.constructor?.name || 'Error',
+    });
   }
 }
 

@@ -61,7 +61,7 @@ function getNearbyEntities(bot) {
       let type = 'passive';
       if (HOSTILE_MOBS.includes(name.toLowerCase())) type = 'hostile';
 
-      return {
+      const entity = {
         name,
         type,
         distance: Math.floor(bot.entity.position.distanceTo(e.position)),
@@ -71,6 +71,17 @@ function getNearbyEntities(bot) {
           z: Math.floor(e.position.z),
         },
       };
+
+      // Include entity health when available (metadata index 9 in most versions)
+      const health = e.metadata?.[9];
+      if (typeof health === 'number' && health > 0) {
+        entity.health = Math.round(health * 10) / 10;
+      }
+
+      // Include entity ID for targeting
+      entity.entityId = e.id;
+
+      return entity;
     })
     .sort((a, b) => a.distance - b.distance)
     .slice(0, 20);
@@ -220,6 +231,21 @@ function getTimePhase(bot) {
   return 'day';
 }
 
+function getActiveEffects(bot) {
+  try {
+    const effects = bot.entity.effects;
+    if (!effects || typeof effects !== 'object') return [];
+    return Object.entries(effects).map(([id, effect]) => ({
+      id: parseInt(id),
+      name: effect.name || `effect_${id}`,
+      amplifier: effect.amplifier || 0,
+      duration: effect.duration ? Math.floor(effect.duration / 20) : 0, // ticks to seconds
+    }));
+  } catch (e) {
+    return [];
+  }
+}
+
 function countInventoryItem(bot, itemName) {
   return bot.inventory.items()
     .filter(i => i.name === itemName || i.name.includes(itemName))
@@ -246,6 +272,7 @@ module.exports = {
   getInventoryStats,
   getDimension,
   getTimePhase,
+  getActiveEffects,
   countInventoryItem,
   hasItem,
 };

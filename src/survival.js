@@ -9,6 +9,7 @@ let savedGoal = null;
 let lastPos = null;
 let stuckTicks = 0;
 const STUCK_THRESHOLD = 5; // 5 ticks * 1s = 5s without moving
+let lastNearestThreat = null; // Tracked for LLM visibility
 
 // Distances at which the bot reacts to threats
 const CREEPER_FLEE_DIST = 16; // creepers explode at ~3 blocks, give very wide berth
@@ -97,6 +98,8 @@ function checkThreats(bot) {
   if (escaping) return;
 
   const closest = getNearestHostile(bot);
+  // Track nearest threat for LLM state visibility
+  lastNearestThreat = closest ? { name: closest.name, distance: Math.floor(closest.distance) } : null;
 
   // While fleeing, check if we're safe enough to stop
   if (fleeing) {
@@ -317,4 +320,18 @@ async function survivalTick(bot) {
   }
 }
 
-module.exports = { survivalTick, autoEat, escapeWater, checkThreats, autoEquipArmor };
+// Expose internal survival state for LLM visibility
+function getSurvivalState() {
+  return {
+    isFleeing: fleeing,
+    isEscapingWater: escaping,
+    isStuck: stuckTicks >= STUCK_THRESHOLD,
+    stuckTicks,
+    nearestThreat: lastNearestThreat,
+    fleeInfo: fleeing ? {
+      elapsed: Math.floor((Date.now() - fleeStartTime) / 1000),
+    } : null,
+  };
+}
+
+module.exports = { survivalTick, autoEat, escapeWater, checkThreats, autoEquipArmor, getSurvivalState };

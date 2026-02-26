@@ -107,6 +107,19 @@ Check `state.json` every 1-2 seconds. Act on the **first** matching condition:
 | `where_am_i` | `{"action":"where_am_i"}` | Quick status dump |
 | `list_recipes` | `{"action":"list_recipes"}` | What can I craft right now? |
 | `goto_block` | `{"action":"goto_block","blockType":"chest"}` | Navigate to nearest block type |
+| `verify` | `{"action":"verify","check":"craft","item":"iron_pickaxe"}` | **Check feasibility before acting** |
+| `cancel` | `{"action":"cancel"}` | Cancel current running action |
+| `inspect_container` | `{"action":"inspect_container"}` | Look inside nearest chest |
+| `set_note` | `{"action":"set_note","key":"base","value":"100 64 -50"}` | Save persistent note |
+| `get_notes` | `{"action":"get_notes"}` | Retrieve all saved notes |
+
+### Key Patterns for Smart LLM Control
+
+1. **Verify before acting**: Use `verify` before `craft`/`smelt`/`mine` to check feasibility and see what's missing
+2. **Check state.survival**: Before issuing movement, check if bot is fleeing or stuck
+3. **Use cancel**: If you need to change plans mid-action, cancel first
+4. **Save notes**: Use `set_note` to remember base location, goals, and progress across sessions
+5. **Read structured results**: `command_result` events now include rich data (missing materials, items gained, trade lists, etc.)
 
 ### Resource Names for mine_resource
 

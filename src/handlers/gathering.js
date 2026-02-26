@@ -128,20 +128,41 @@ async function mineResource(bot, cmd) {
   if (bestTool) await bot.equip(bestTool, 'hand');
 
   let mined = 0;
+  const miningStart = Date.now();
+  let stopReason = 'completed';
   while (mined < count) {
     const block = bot.findBlock({
       matching: b => blockNames.includes(b.name) || b.name === resourceType,
       maxDistance: 64,
     });
-    if (!block) break;
+    if (!block) { stopReason = 'no_more_blocks'; break; }
+
+    // Update currentAction with progress
+    setCurrentAction({ type: 'mining', resource: resourceType, count, mined, progress: `${mined}/${count}` });
 
     try {
       await bot.pathfinder.goto(new GoalNear(block.position.x, block.position.y, block.position.z, 3));
       const blockBelow = bot.blockAt(block.position.offset(0, -1, 0));
       if (blockBelow && (blockBelow.name === 'lava' || blockBelow.name === 'air')) continue;
+
+      // Check tool durability before mining
+      const heldItem = bot.heldItem;
+      if (heldItem && heldItem.durabilityUsed !== undefined && heldItem.maxDurability) {
+        if (heldItem.maxDurability - heldItem.durabilityUsed <= 2) {
+          logEvent('tool_low_durability', { tool: heldItem.name, remaining: heldItem.maxDurability - heldItem.durabilityUsed });
+          // Try to equip a fresh tool
+          const freshTool = selectBestTool(bot, block);
+          if (freshTool && freshTool !== heldItem) {
+            await bot.equip(freshTool, 'hand');
+          } else {
+            stopReason = 'tool_broken'; break;
+          }
+        }
+      }
+
       await bot.dig(block);
       mined++;
-      logEvent('block_mined', { block: block.name, mined, target: count });
+      logEvent('block_mined', { block: block.name, mined, target: count, elapsed: Math.floor((Date.now() - miningStart) / 1000) });
 
       if (mined % 8 === 0) {
         const torch = bot.inventory.items().find(i => i.name === 'torch');
@@ -154,11 +175,18 @@ async function mineResource(bot, cmd) {
           if (bestTool) await bot.equip(bestTool, 'hand');
         }
       }
+
+      // Check inventory space
+      if (bot.inventory.items().length >= 35) {
+        stopReason = 'inventory_full'; break;
+      }
+
       await new Promise(r => setTimeout(r, 500));
-    } catch (err) { break; }
+    } catch (err) { stopReason = `error: ${err.message}`; break; }
   }
 
-  logEvent('mining_complete', { resource: resourceType, mined });
+  const elapsed = Math.floor((Date.now() - miningStart) / 1000);
+  logEvent('mining_complete', { resource: resourceType, mined, target: count, elapsed, stopReason });
   clearCurrentAction();
 }
 
@@ -235,6 +263,10 @@ async function collectItems(bot, cmd) {
   setCurrentAction({ type: 'collecting', count: items.length });
   let collected = 0;
 
+  // Snapshot inventory before collecting
+  const inventoryBefore = {};
+  bot.inventory.items().forEach(i => { inventoryBefore[i.name] = (inventoryBefore[i.name] || 0) + i.count; });
+
   for (const item of items) {
     if (!item.position || !bot.entities[item.id]) continue;
     try {
@@ -246,8 +278,21 @@ async function collectItems(bot, cmd) {
     }
   }
 
+  // Calculate what was actually picked up
+  const inventoryAfter = {};
+  bot.inventory.items().forEach(i => { inventoryAfter[i.name] = (inventoryAfter[i.name] || 0) + i.count; });
+  const gained = {};
+  for (const [name, count] of Object.entries(inventoryAfter)) {
+    const diff = count - (inventoryBefore[name] || 0);
+    if (diff > 0) gained[name] = diff;
+  }
+
   clearCurrentAction();
-  logEvent('command_result', { commandId: cmd.id, success: collected > 0, detail: `Collected ${collected}/${items.length} items` });
+  logEvent('command_result', {
+    commandId: cmd.id, success: collected > 0,
+    detail: `Collected ${collected}/${items.length} items`,
+    itemsGained: gained,
+  });
 }
 
 async function drop(bot, cmd) {

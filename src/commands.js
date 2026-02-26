@@ -11,6 +11,7 @@ const building = require('./handlers/building');
 const farming = require('./handlers/farming');
 const interaction = require('./handlers/interaction');
 const utility = require('./handlers/utility');
+const creative = require('./handlers/creative');
 
 // Map action names to handler functions
 const DISPATCH = {
@@ -56,7 +57,10 @@ const DISPATCH = {
 
   // Interaction
   chat:           interaction.chat,
+  whisper:        interaction.whisper,
   equip:          interaction.equip,
+  unequip:        interaction.unequip,
+  drink_potion:   interaction.drinkPotion,
   eat:            interaction.eat,
   sleep:          interaction.sleep,
   activate:       interaction.activate,
@@ -68,6 +72,11 @@ const DISPATCH = {
   store_items:    interaction.storeItems,
   retrieve_items: interaction.retrieveItems,
   manage_inventory: interaction.manageInventory,
+
+  // Creative mode
+  creative_fly:    creative.creativeFly,
+  creative_fly_to: creative.creativeFlyTo,
+  creative_give:   creative.creativeGive,
 
   // Utility
   scan:                utility.scan,

@@ -1,4 +1,4 @@
-const { GoalBlock, GoalFollow } = require('mineflayer-pathfinder').goals;
+const { GoalBlock, GoalFollow, GoalNear, GoalInvert } = require('mineflayer-pathfinder').goals;
 const { logEvent } = require('./events');
 const { FOOD_ITEMS, HOSTILE_MOBS } = require('./perception');
 
@@ -62,19 +62,22 @@ function restoreGoal(bot) {
 }
 
 function fleeFrom(bot, entity) {
+  // Use GoalInvert to let pathfinder find the best escape route
+  // GoalInvert(GoalNear(threat)) = run AWAY from the threat position
+  const tp = entity.position;
+  const fleeGoal = new GoalInvert(new GoalNear(tp.x, tp.y, tp.z, 20));
+  bot.pathfinder.setGoal(fleeGoal, false);
+
+  // Return estimated flee direction for event logging
   const botPos = bot.entity.position;
-  const threatPos = entity.position;
-
-  // Run in the opposite direction, 20 blocks away
-  const dx = botPos.x - threatPos.x;
-  const dz = botPos.z - threatPos.z;
+  const dx = botPos.x - tp.x;
+  const dz = botPos.z - tp.z;
   const dist = Math.sqrt(dx * dx + dz * dz) || 1;
-  const fleeX = Math.floor(botPos.x + (dx / dist) * 20);
-  const fleeZ = Math.floor(botPos.z + (dz / dist) * 20);
-  const fleeY = Math.floor(botPos.y);
-
-  bot.pathfinder.setGoal(new GoalBlock(fleeX, fleeY, fleeZ), false);
-  return { x: fleeX, y: fleeY, z: fleeZ };
+  return {
+    x: Math.floor(botPos.x + (dx / dist) * 20),
+    y: Math.floor(botPos.y),
+    z: Math.floor(botPos.z + (dz / dist) * 20),
+  };
 }
 
 function getNearestHostile(bot) {

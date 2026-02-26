@@ -7,6 +7,8 @@ const { logEvent, loadEvents } = require('./events');
 const { writeState } = require('./state');
 const { pollCommands } = require('./commands');
 const { survivalTick } = require('./survival');
+const { writeManifest } = require('./manifest');
+const { HOSTILE_MOBS } = require('./perception');
 
 // Ensure data directory exists
 if (!fs.existsSync(config.DATA_DIR)) {
@@ -15,6 +17,9 @@ if (!fs.existsSync(config.DATA_DIR)) {
 
 // Initialize events from disk
 loadEvents();
+
+// Write capability manifest for agent discovery
+writeManifest();
 
 const botConfig = {
   host: config.MC_HOST,
@@ -39,6 +44,9 @@ let intervals = [];
 let bot = null;
 let reconnecting = false;
 
+// Track last known weather for change detection
+let lastWeather = null;
+
 function clearIntervals() {
   intervals.forEach(i => clearInterval(i));
   intervals = [];
@@ -61,13 +69,26 @@ function createBot() {
   bot.on('spawn', () => {
     console.log(`${bot.username} spawned at ${bot.entity.position.floored()}`);
 
-    // Always re-initialize movements (needed after respawn too)
+    // Initialize movements with improved pathfinder configuration
+    const mcData = require('minecraft-data')(bot.version);
     const movements = new Movements(bot);
     movements.allowParkour = true;
     movements.canDig = false;
     movements.allow1by1towers = true;
     movements.allowFreeMotion = false;
     movements.scafoldingBlocks = [];
+    movements.canOpenDoors = true;
+
+    // Configure blocks to avoid in pathfinding
+    if (mcData.blocksByName.lava) movements.blocksToAvoid.add(mcData.blocksByName.lava.id);
+    if (mcData.blocksByName.cactus) movements.blocksToAvoid.add(mcData.blocksByName.cactus.id);
+    if (mcData.blocksByName.sweet_berry_bush) movements.blocksToAvoid.add(mcData.blocksByName.sweet_berry_bush.id);
+    if (mcData.blocksByName.fire) movements.blocksToAvoid.add(mcData.blocksByName.fire.id);
+    if (mcData.blocksByName.soul_fire) movements.blocksToAvoid.add(mcData.blocksByName.soul_fire.id);
+    if (mcData.blocksByName.magma_block) movements.blocksToAvoid.add(mcData.blocksByName.magma_block.id);
+    if (mcData.blocksByName.campfire) movements.blocksToAvoid.add(mcData.blocksByName.campfire.id);
+    if (mcData.blocksByName.wither_rose) movements.blocksToAvoid.add(mcData.blocksByName.wither_rose.id);
+
     bot.pathfinder.setMovements(movements);
 
     const isRespawn = spawned;
@@ -101,6 +122,29 @@ function createBot() {
     logEvent('whisper', { username, message });
   });
 
+  // --- Server/system messages (death messages, advancements, etc.) ---
+  bot.on('message', (jsonMsg, position) => {
+    // position: 'chat', 'system', or 'game_info' (action bar)
+    // Only log system messages — chat messages are already handled by the 'chat' event
+    if (position === 'system' || position === 'game_info') {
+      const text = jsonMsg.toString();
+      if (text && text.trim()) {
+        logEvent('server_message', { message: text, type: position });
+      }
+    }
+  });
+
+  // --- Player join/leave ---
+  bot.on('playerJoined', (player) => {
+    if (player.username === bot.username) return;
+    logEvent('player_joined', { username: player.username });
+  });
+
+  bot.on('playerLeft', (player) => {
+    if (player.username === bot.username) return;
+    logEvent('player_left', { username: player.username });
+  });
+
   // --- Health / damage ---
   bot.on('health', () => {
     if (bot.health < 10) {
@@ -127,6 +171,64 @@ function createBot() {
 
   bot.on('wake', () => {
     logEvent('woke_up', {});
+  });
+
+  // --- Experience ---
+  bot.on('experience', () => {
+    logEvent('experience_gained', {
+      level: bot.experience.level,
+      points: bot.experience.points,
+      progress: bot.experience.progress,
+    });
+  });
+
+  // --- Entity lifecycle ---
+  bot.on('entityGone', (entity) => {
+    if (entity === bot.entity || !entity.position) return;
+    const name = (entity.name || entity.displayName || '').toLowerCase();
+    // Only log notable entities (hostiles, named entities, players) not clutter
+    if (HOSTILE_MOBS.includes(name) || entity.type === 'player') {
+      logEvent('entity_gone', {
+        name: entity.name || entity.displayName || 'unknown',
+        type: entity.type === 'player' ? 'player' : (HOSTILE_MOBS.includes(name) ? 'hostile' : 'passive'),
+        reason: entity.isValid === false ? 'dead' : 'despawned',
+      });
+    }
+  });
+
+  // --- Digging events ---
+  bot.on('diggingCompleted', (block) => {
+    logEvent('dig_completed', {
+      block: block.name,
+      position: { x: block.position.x, y: block.position.y, z: block.position.z },
+    });
+  });
+
+  bot.on('diggingAborted', (block) => {
+    logEvent('dig_aborted', {
+      block: block.name,
+      position: { x: block.position.x, y: block.position.y, z: block.position.z },
+    });
+  });
+
+  // --- Item pickup ---
+  bot.on('playerCollect', (collector, collected) => {
+    if (collector === bot.entity) {
+      const itemEntity = collected;
+      logEvent('item_collected', {
+        collector: bot.username,
+        item: itemEntity.name || 'item',
+      });
+    }
+  });
+
+  // --- Weather ---
+  bot.on('weatherUpdate', () => {
+    const newWeather = bot.isRaining ? (bot.thunderState ? 'thunder' : 'rain') : 'clear';
+    if (lastWeather !== null && lastWeather !== newWeather) {
+      logEvent('weather_changed', { old: lastWeather, new: newWeather });
+    }
+    lastWeather = newWeather;
   });
 
   // --- Pathfinder ---

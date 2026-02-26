@@ -10,6 +10,15 @@ async function chat(bot, cmd) {
   logEvent('command_result', { commandId: cmd.id, success: true, detail: `Said: ${cmd.message}` });
 }
 
+async function whisper(bot, cmd) {
+  if (!cmd.username || !cmd.message) {
+    logEvent('command_result', { commandId: cmd.id, success: false, detail: 'username and message are required' });
+    return;
+  }
+  bot.whisper(cmd.username, cmd.message);
+  logEvent('command_result', { commandId: cmd.id, success: true, detail: `Whispered to ${cmd.username}: ${cmd.message}` });
+}
+
 async function equip(bot, cmd) {
   const itemName = cmd.item;
   const hand = cmd.hand === 'off' ? 'off-hand' : 'hand';
@@ -23,6 +32,51 @@ async function equip(bot, cmd) {
   try {
     await bot.equip(item, hand);
     logEvent('command_result', { commandId: cmd.id, success: true, detail: `Equipped ${item.name}` });
+  } catch (err) {
+    logEvent('command_result', { commandId: cmd.id, success: false, detail: err.message });
+  }
+}
+
+async function unequip(bot, cmd) {
+  const validSlots = ['hand', 'off-hand', 'head', 'torso', 'legs', 'feet'];
+  const slot = cmd.slot || 'hand';
+  if (!validSlots.includes(slot)) {
+    logEvent('command_result', { commandId: cmd.id, success: false, detail: `Invalid slot: ${slot}. Valid: ${validSlots.join(', ')}` });
+    return;
+  }
+
+  try {
+    await bot.unequip(slot);
+    logEvent('command_result', { commandId: cmd.id, success: true, detail: `Unequipped ${slot}` });
+  } catch (err) {
+    logEvent('command_result', { commandId: cmd.id, success: false, detail: err.message });
+  }
+}
+
+async function drinkPotion(bot, cmd) {
+  const filter = cmd.potion ? cmd.potion.toLowerCase() : null;
+  const potion = bot.inventory.items().find(i => {
+    if (i.name !== 'potion' && i.name !== 'splash_potion' && i.name !== 'lingering_potion') return false;
+    if (filter && !i.name.includes(filter)) {
+      // Check nbt/display name for potion type
+      const displayName = (i.displayName || i.name || '').toLowerCase();
+      if (!displayName.includes(filter)) return false;
+    }
+    return true;
+  });
+
+  if (!potion) {
+    logEvent('command_result', { commandId: cmd.id, success: false, detail: `No ${filter || 'potion'} in inventory` });
+    return;
+  }
+
+  try {
+    await bot.equip(potion, 'hand');
+    bot.activateItem();
+    // Potions take about 1.6 seconds to drink
+    await new Promise(r => setTimeout(r, 1800));
+    bot.deactivateItem();
+    logEvent('command_result', { commandId: cmd.id, success: true, detail: `Drank ${potion.displayName || potion.name}` });
   } catch (err) {
     logEvent('command_result', { commandId: cmd.id, success: false, detail: err.message });
   }
@@ -377,4 +431,4 @@ async function manageInventory(bot, cmd) {
   }
 }
 
-module.exports = { chat, equip, eat, sleep, activate, fish, useOn, trade, brew, enchant, storeItems, retrieveItems, manageInventory };
+module.exports = { chat, whisper, equip, unequip, drinkPotion, eat, sleep, activate, fish, useOn, trade, brew, enchant, storeItems, retrieveItems, manageInventory };

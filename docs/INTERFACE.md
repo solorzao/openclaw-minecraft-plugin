@@ -1,16 +1,18 @@
 # OpenClaw Minecraft Bot Interface
 
-**File-Based IPC: `state.json` + `events.json` + `commands.json`**
+**File-Based IPC: `state.json` + `events.json` + `commands.json` + `manifest.json`**
 
 ## Overview
 
-The bot communicates with AI agents through three JSON files in the `data/` directory:
+The bot communicates with AI agents through JSON files in the `data/` directory:
 
 - **`state.json`** - Bot writes every 1 second (current world snapshot)
 - **`events.json`** - Bot appends game events (rolling buffer of 200)
 - **`commands.json`** - Agent writes actions for bot to execute (consumed on read)
+- **`manifest.json`** - Written once on startup: describes all capabilities, actions, events, and state fields
+- **`notes.json`** - Persistent key-value store for agent memory
 
-All file writes use atomic write-to-temp-then-rename to prevent partial reads.
+**New agents:** Read `manifest.json` first to discover all capabilities without needing documentation.
 
 ---
 
@@ -27,15 +29,21 @@ Written every second to `data/state.json`. This is the primary way to observe th
     "healthTrend": "stable",
     "food": 14,
     "saturation": 3.5,
-    "experience": { "level": 5, "points": 42 },
+    "oxygenLevel": 20,
+    "experience": { "level": 5, "points": 42, "progress": 0.35 },
     "isInWater": false,
     "isSleeping": false,
     "isOnFire": false,
+    "isUsingItem": false,
     "gameMode": "survival",
     "dimension": "overworld",
     "biome": "plains",
     "weather": "clear",
-    "lightLevel": 15
+    "lightLevel": 15,
+    "effects": [],
+    "difficulty": "normal",
+    "hardcore": false,
+    "spawnPoint": { "x": -30, "y": 64, "z": -140 }
   },
   "equipment": {
     "hand": { "name": "iron_pickaxe", "count": 1 },
@@ -77,8 +85,13 @@ Written every second to `data/state.json`. This is the primary way to observe th
   ],
   "time": {
     "timeOfDay": 6000,
-    "phase": "day"
+    "phase": "day",
+    "day": 42
   },
+  "players": [
+    { "username": "Wookiee_23", "ping": 45, "gameMode": 0 }
+  ],
+  "vehicle": null,
   "currentAction": null,
   "currentGoal": {
     "goal": "mine iron and craft iron tools",
@@ -89,7 +102,8 @@ Written every second to `data/state.json`. This is the primary way to observe th
     "active": true,
     "goalX": -50,
     "goalZ": 120,
-    "distanceToGoal": 45
+    "distanceToGoal": 45,
+    "isMoving": true
   },
   "survival": {
     "isFleeing": false,
@@ -119,16 +133,21 @@ Written every second to `data/state.json`. This is the primary way to observe th
 | `bot.healthTrend` | `stable`, `healing`, or `taking_damage` |
 | `bot.food` | Hunger bar (0-20) |
 | `bot.saturation` | Saturation level (hidden hunger buffer) |
-| `bot.experience` | Level and points |
+| `bot.oxygenLevel` | Breath remaining (0-20, depletes when underwater) |
+| `bot.experience` | Level, points, and progress (0-1 float to next level) |
 | `bot.isInWater` | Whether bot is submerged |
 | `bot.isSleeping` | Whether bot is in a bed |
 | `bot.isOnFire` | Whether bot is on fire |
+| `bot.isUsingItem` | Whether actively using held item (eating, drawing bow, blocking with shield) |
 | `bot.gameMode` | survival, creative, adventure, spectator |
 | `bot.dimension` | `overworld`, `nether`, or `the_end` |
 | `bot.biome` | Current biome name |
 | `bot.weather` | `clear`, `rain`, or `thunder` |
 | `bot.lightLevel` | Block light level at bot position |
 | `bot.effects` | Active potion/status effects (name, amplifier, duration in seconds) |
+| `bot.difficulty` | Server difficulty (peaceful, easy, normal, hard) |
+| `bot.hardcore` | Whether hardcore mode is enabled |
+| `bot.spawnPoint` | Bot's respawn coordinates (null if unset) |
 | `equipment` | Currently equipped items in each slot (hand, offHand, head, chest, legs, feet) |
 | `armor` | Armor pieces worn and total protection rating |
 | `inventory` | All items with name, count, slot |
@@ -138,9 +157,12 @@ Written every second to `data/state.json`. This is the primary way to observe th
 | `notableBlocks` | Up to 30 notable blocks within 33 blocks (chests, ores, workstations, spawners, portals) |
 | `time.timeOfDay` | Game ticks (0-24000) |
 | `time.phase` | `day`, `sunset`, or `night` |
+| `time.day` | Current in-game day number |
+| `players` | All online players with username, ping, and gameMode |
+| `vehicle` | Currently mounted entity info (name, entityId, position) or null |
 | `currentAction` | Current action with progress info (e.g. `{type: "mining", mined: 5, count: 16, progress: "5/16"}`) |
 | `currentGoal` | Agent's persisted objective: `goal` (text), `setAt` (timestamp), `positionWhenSet`. Null if no goal set. Set via `goal` command |
-| `pathfinding` | Current pathfinding status: `active`, goal coordinates, `distanceToGoal`. Null if idle |
+| `pathfinding` | Current pathfinding status: `active`, goal coordinates, `distanceToGoal`, `isMoving`. Null if idle |
 | `survival` | Survival system state: `isFleeing`, `isEscapingWater`, `isStuck`, `nearestThreat`, `fleeInfo` |
 | `combat` | Active combat info: `target`, `targetHealth`, `hitsDealt`, `damageTaken`, `elapsed`. Null if not fighting |
 | `notes` | Agent-saved persistent notes (key-value pairs saved via `set_note` command) |
@@ -163,12 +185,21 @@ Note: event data fields are flat (not nested under a `data` key).
 
 | Type | Fields | Description |
 |------|--------|-------------|
-| `spawn` | `position` | Bot spawned in world |
+| `spawn` | `position`, `isRespawn` | Bot spawned in world |
 | `chat` | `username`, `message` | Player sent chat message |
 | `whisper` | `username`, `message` | Player whispered to bot |
+| `server_message` | `message`, `type` | System/server message (death messages, advancements, etc.) |
+| `player_joined` | `username` | A player joined the server |
+| `player_left` | `username` | A player left the server |
 | `danger` | `reason`, `health`, `food` | Low health detected (health < 10) |
 | `hurt` | `health` | Bot took damage |
 | `death` | `position` | Bot died (position logged for item recovery) |
+| `experience_gained` | `level`, `points`, `progress` | Bot gained experience |
+| `entity_gone` | `name`, `type`, `reason` | A notable entity disappeared (hostile/player) |
+| `dig_completed` | `block`, `position` | Finished breaking a block |
+| `dig_aborted` | `block`, `position` | Mining was interrupted |
+| `item_collected` | `collector`, `item` | Bot picked up an item |
+| `weather_changed` | `old`, `new` | Weather changed (clear/rain/thunder) |
 | `woke_up` | _(none)_ | Bot woke from bed |
 | `goal_reached` | _(none)_ | Pathfinder reached destination |
 | `path_failed` | `status` | Pathfinding failed (`noPath`, `timeout`, `stuck`) |
@@ -201,7 +232,7 @@ Every command you send with an `id` field will produce:
   "requiresTable": true }
 ```
 
-Many commands now return **structured data** alongside the `detail` string. Check for fields like `missingMaterials`, `verify`, `scan`, `blocks`, `trades`, `container`, `itemsGained`, `notes`, etc.
+Many commands return **structured data** alongside the `detail` string. Check for fields like `missingMaterials`, `verify`, `scan`, `blocks`, `trades`, `container`, `itemsGained`, `notes`, etc.
 
 ---
 
@@ -386,11 +417,28 @@ Crops: `wheat`, `carrot`, `potato`, `beetroot`, `melon`, `pumpkin`, `nether_wart
 { "action": "chat", "message": "Hello everyone!" }
 ```
 
+#### `whisper` - Send a private message to a player
+```json
+{ "action": "whisper", "username": "Wookiee_23", "message": "Hey, come check this out!" }
+```
+
 #### `equip` - Equip an item
 ```json
 { "action": "equip", "item": "iron_sword", "hand": "main" }
 ```
 Hands: `main`, `off`
+
+#### `unequip` - Remove equipment from a slot
+```json
+{ "action": "unequip", "slot": "head" }
+```
+Slots: `hand`, `off-hand`, `head`, `torso`, `legs`, `feet`
+
+#### `drink_potion` - Drink a potion
+```json
+{ "action": "drink_potion" }
+{ "action": "drink_potion", "potion": "healing" }
+```
 
 #### `eat` - Eat food from inventory
 ```json
@@ -430,6 +478,24 @@ Hands: `main`, `off`
 #### `enchant` - Enchant items
 ```json
 { "action": "enchant" }
+```
+
+### Creative Mode
+
+#### `creative_fly` - Toggle creative flight
+```json
+{ "action": "creative_fly", "enabled": true }
+{ "action": "creative_fly", "enabled": false }
+```
+
+#### `creative_fly_to` - Fly to coordinates (creative only)
+```json
+{ "action": "creative_fly_to", "x": 100, "y": 80, "z": -50 }
+```
+
+#### `creative_give` - Give items in creative mode
+```json
+{ "action": "creative_give", "item": "diamond_pickaxe", "count": 1 }
 ```
 
 ### Inventory Management
@@ -503,7 +569,7 @@ Stops pathfinding, clears combat, and resets all control states. Returns what wa
 { "action": "inspect_container" }
 { "action": "inspect_container", "position": { "x": 100, "y": 64, "z": -50 } }
 ```
-Returns: container type, all items inside, and free slots. Does not take any items. Supports chests, barrels, shulker boxes, hoppers, etc.
+Returns: container type, all items inside, and free slots. Does not take any items.
 
 #### `set_note` - Save a persistent note (survives restarts)
 ```json
@@ -539,6 +605,20 @@ Any string sets a persistent objective that appears in `state.json` as `currentG
 
 ---
 
+## Manifest (Self-Describing Capabilities)
+
+On startup the bot writes `data/manifest.json` containing:
+
+- **actions**: Every command with its parameters, types, defaults, and description
+- **events**: Every event type with its fields and description
+- **stateFields**: Every field in `state.json` with its type and description
+- **autonomousBehaviors**: What the bot does automatically and when
+- **protocol**: How the IPC works (which files to read/write, polling intervals)
+
+**New agents should read `manifest.json` first** to discover capabilities without needing this documentation.
+
+---
+
 ## Timing
 
 | Interval | Value | Description |
@@ -563,6 +643,18 @@ The bot automatically performs these actions without commands:
 | Smart sprint | Following player | Sprints when far, walks when close |
 | Auto-tool | Digging blocks | Selects best tool (pickaxe/axe/shovel) for the block |
 | Auto-weapon | Combat | Equips best available weapon |
+
+---
+
+## Pathfinder Configuration
+
+The pathfinder is configured with:
+- **Parkour**: enabled (can jump gaps)
+- **Digging**: disabled (won't break blocks to path)
+- **1x1 towers**: enabled (can pillar up)
+- **Door opening**: enabled (can open fence gates)
+- **Blocks avoided**: lava, cactus, sweet berry bush, fire, soul fire, magma block, campfire, wither rose
+- **Flee logic**: Uses `GoalInvert` for intelligent escape routing away from threats
 
 ---
 

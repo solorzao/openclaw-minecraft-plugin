@@ -59,6 +59,38 @@ function clearCurrentAction() {
   currentAction = null;
 }
 
+function getOnlinePlayers(bot) {
+  try {
+    return Object.values(bot.players)
+      .filter(p => p.username !== bot.username)
+      .map(p => ({
+        username: p.username,
+        ping: p.ping,
+        gameMode: p.gamemode,
+      }));
+  } catch (e) {
+    return [];
+  }
+}
+
+function getVehicleInfo(bot) {
+  try {
+    const vehicle = bot.vehicle;
+    if (!vehicle) return null;
+    return {
+      name: vehicle.name || vehicle.displayName || 'unknown',
+      entityId: vehicle.id,
+      position: vehicle.position ? {
+        x: Math.floor(vehicle.position.x),
+        y: Math.floor(vehicle.position.y),
+        z: Math.floor(vehicle.position.z),
+      } : null,
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
 function buildState(bot) {
   lazyLoadModules();
   const pos = bot.entity.position;
@@ -98,6 +130,11 @@ function buildState(bot) {
         pathfinding.distanceToGoal = Math.floor(Math.sqrt(dx * dx + dz * dz));
       }
     }
+    // Include pathfinder movement state
+    if (bot.pathfinder.isMoving && typeof bot.pathfinder.isMoving === 'function') {
+      if (!pathfinding) pathfinding = { active: false };
+      pathfinding.isMoving = bot.pathfinder.isMoving();
+    }
   } catch (e) {}
 
   // Get survival and combat states
@@ -105,6 +142,18 @@ function buildState(bot) {
   let combatInfo = null;
   try { survivalState = _getSurvivalState(); } catch (e) {}
   try { combatInfo = _getCombatState(); } catch (e) {}
+
+  // Spawn point
+  let spawnPoint = null;
+  try {
+    if (bot.spawnPoint) {
+      spawnPoint = {
+        x: Math.floor(bot.spawnPoint.x),
+        y: Math.floor(bot.spawnPoint.y),
+        z: Math.floor(bot.spawnPoint.z),
+      };
+    }
+  } catch (e) {}
 
   return {
     timestamp: new Date().toISOString(),
@@ -121,19 +170,25 @@ function buildState(bot) {
       healthTrend,
       food: bot.food,
       saturation: bot.foodSaturation || 0,
+      oxygenLevel: bot.oxygenLevel != null ? bot.oxygenLevel : 20,
       experience: {
         level: bot.experience.level,
         points: bot.experience.points,
+        progress: bot.experience.progress || 0,
       },
       isInWater: bot.entity.isInWater,
       isSleeping: bot.isSleeping,
       isOnFire: bot.entity.isOnFire || false,
+      isUsingItem: bot.usingHeldItem || false,
       gameMode: bot.game.gameMode,
       dimension: getDimension(bot),
       biome,
       weather,
       lightLevel: getLightLevel(bot),
       effects: getActiveEffects(bot),
+      difficulty: bot.game.difficulty || 'unknown',
+      hardcore: bot.game.hardcore || false,
+      spawnPoint,
     },
     equipment: getEquipment(bot),
     armor: getArmorRating(bot),
@@ -148,7 +203,10 @@ function buildState(bot) {
     time: {
       timeOfDay: bot.time.timeOfDay,
       phase: getTimePhase(bot),
+      day: bot.time.day || 0,
     },
+    players: getOnlinePlayers(bot),
+    vehicle: getVehicleInfo(bot),
     currentAction,
     currentGoal: _loadGoal ? _loadGoal() : null,
     pathfinding,

@@ -7,6 +7,7 @@
 ```
 You (AI Agent)                          Bot (Mineflayer)
      |                                       |
+     |-- read data/manifest.json ----------> | (written once on startup - discover capabilities)
      |-- read data/state.json -------------> | (updated every 1s)
      |-- read data/events.json ------------> | (rolling 200 events)
      |-- write data/commands.json ---------->| (polled every 500ms, cleared after exec)
@@ -17,6 +18,8 @@ You (AI Agent)                          Bot (Mineflayer)
 **File paths:** Relative to the bot's working directory, default `./data/`. If `BOT_DATA_DIR` env var is set, files are there instead.
 
 **Atomicity:** Safe to read `state.json` and `events.json` at any time (atomic writes). Write `commands.json` as a complete JSON array — don't append.
+
+**Self-describing:** Read `manifest.json` on startup to discover all available actions, parameters, events, and state fields without needing this documentation.
 
 ---
 
@@ -42,29 +45,33 @@ Check `state.json` every 1-2 seconds. Act on the **first** matching condition:
    → Eat if you have food: {"action": "eat"}
    → Otherwise flee: bot auto-flees hostiles, just don't send movement commands
 
-2. STARVING (food < 6, no food in inventory)
+2. DROWNING (oxygenLevel < 10, isInWater = true)
+   → Bot auto-escapes water, but you can help: {"action": "goto", "x":..., "y":..., "z":...}
+   → Jump helps: {"action": "jump"}
+
+3. STARVING (food < 6, no food in inventory)
    → Hunt: {"action": "find_food"}
    → Or cook raw meat: {"action": "cook_food"}
 
-3. ON FIRE (isOnFire = true)
+4. ON FIRE (isOnFire = true)
    → Jump into water: check notableBlocks for water, or wait (fire expires)
 
-4. NIGHT TIME (time.phase = "night")
+5. NIGHT TIME (time.phase = "night")
    → Sleep if bed available: {"action": "sleep"}
    → Or build shelter: {"action": "build", "template": "shelter_3x3"}
    → Or just keep moving — bot auto-flees hostiles
 
-5. INVENTORY FULL (inventoryStats.freeSlots < 3)
+6. INVENTORY FULL (inventoryStats.freeSlots < 3)
    → Store in chest: {"action": "store_items"}
    → Or drop junk: {"action": "manage_inventory"}
 
-6. NO TOOLS
+7. NO TOOLS
    → Gather wood: {"action": "mine_resource", "resource": "wood", "count": 5}
    → Craft planks: {"action": "craft", "item": "oak_planks", "count": 4}
    → Craft sticks: {"action": "craft", "item": "stick"}
    → Craft pickaxe: {"action": "craft", "item": "wooden_pickaxe"}
 
-7. IDLE — Do something productive
+8. IDLE — Do something productive
    → Mine resources, explore, farm, build
 ```
 
@@ -78,7 +85,7 @@ Check `state.json` every 1-2 seconds. Act on the **first** matching condition:
 | Auto-armor | Every 10s | Equips best armor pieces |
 | Auto-tool | When you dig | Selects best pickaxe/axe/shovel |
 | Auto-weapon | When you attack | Equips best sword/axe |
-| Flee hostiles | Mob within 12-16 blocks | Runs opposite direction |
+| Flee hostiles | Mob within 12-16 blocks | Runs away using pathfinder (GoalInvert) |
 | Escape water | Submerged | Pathfinds to land |
 | Stuck escape | No movement for 5s | Retries or wanders randomly |
 
@@ -101,7 +108,9 @@ Check `state.json` every 1-2 seconds. Act on the **first** matching condition:
 | `attack` | `{"action":"attack","target":"zombie"}` | Melee combat loop |
 | `collect_items` | `{"action":"collect_items"}` | Picks up dropped items nearby |
 | `chat` | `{"action":"chat","message":"Hello!"}` | Send chat message |
+| `whisper` | `{"action":"whisper","username":"Player1","message":"Hi!"}` | Private message |
 | `eat` | `{"action":"eat"}` | Eat food from inventory |
+| `drink_potion` | `{"action":"drink_potion"}` | Drink a potion |
 | `scan` | `{"action":"scan"}` | Survey area (blocks, entities, food) |
 | `find_blocks` | `{"action":"find_blocks","blockType":"diamond_ore"}` | Locate specific blocks |
 | `where_am_i` | `{"action":"where_am_i"}` | Quick status dump |
@@ -114,6 +123,16 @@ Check `state.json` every 1-2 seconds. Act on the **first** matching condition:
 | `set_note` | `{"action":"set_note","key":"base","value":"100 64 -50"}` | Save persistent note |
 | `get_notes` | `{"action":"get_notes"}` | Retrieve all saved notes |
 | `ack_events` | `{"action":"ack_events","eventId":150}` | **Mark events as processed (survives restarts)** |
+| `equip` | `{"action":"equip","item":"diamond_sword"}` | Equip item to hand |
+| `unequip` | `{"action":"unequip","slot":"head"}` | Remove equipment |
+
+### Creative Mode Commands
+
+| Action | Example | Notes |
+|--------|---------|-------|
+| `creative_fly` | `{"action":"creative_fly","enabled":true}` | Toggle flight |
+| `creative_fly_to` | `{"action":"creative_fly_to","x":100,"y":80,"z":-50}` | Fly to position |
+| `creative_give` | `{"action":"creative_give","item":"diamond_pickaxe","count":1}` | Give items |
 
 ### Key Patterns for Smart LLM Control
 
@@ -123,7 +142,10 @@ Check `state.json` every 1-2 seconds. Act on the **first** matching condition:
 4. **Use notes for memory**: Use `set_note` to remember base locations, plans, conversation context, and progress. Notes appear in `state.json` every cycle.
 5. **Check state.survival**: Before issuing movement, check if bot is fleeing or stuck
 6. **Use cancel**: If you need to change plans mid-action, cancel first
-7. **Read structured results**: `command_result` events now include rich data (missing materials, items gained, trade lists, etc.)
+7. **Read structured results**: `command_result` events include rich data (missing materials, items gained, trade lists, etc.)
+8. **Check state.players**: See who's online (username, ping, gameMode) — not just who's nearby
+9. **Monitor oxygenLevel**: When underwater, track `bot.oxygenLevel` (0-20) to avoid drowning
+10. **Check vehicle**: `state.vehicle` tells you if the bot is mounted on something
 
 ### Maintaining Context Across Decision Cycles
 
@@ -202,6 +224,7 @@ or
 | `"Not night time"` | Can't sleep during day | Wait for `time.phase = "night"` |
 | `"No target found"` | No matching mob to attack | Check nearbyEntities in state |
 | `"timeout"` (path event) | Pathfinder gave up | Send `stop`, then retry or try a different route |
+| `"Not in creative mode"` | Creative command in survival | Only use `creative_*` commands in creative mode |
 
 **General recovery pattern:**
 1. Read the error `detail`
@@ -283,6 +306,15 @@ When time.phase changes to "sunset":
 5. Bot auto-sprints when far, walks when close
 ```
 
+### Example 5: Multiplayer Awareness
+
+```
+1. Check state.players for who's online (includes players not nearby)
+2. Listen for player_joined / player_left events
+3. Whisper to specific players: {"action":"whisper","username":"Player1","message":"Hi!"}
+4. Check nearbyEntities for players actually within visual range
+```
+
 ---
 
 ## State Polling Cheat Sheet
@@ -292,14 +324,20 @@ Key fields to check every cycle:
 ```
 state.bot.health        → < 6 = critical, < 10 = caution
 state.bot.food          → < 6 = auto-eat triggers, < 3 = starving
+state.bot.oxygenLevel   → < 10 = drowning risk (when underwater)
 state.bot.healthTrend   → "taking_damage" = under attack
 state.bot.isOnFire      → need water
+state.bot.isUsingItem   → currently eating/blocking/drawing bow
 state.bot.dimension     → overworld / nether / the_end
+state.bot.difficulty    → peaceful / easy / normal / hard
 state.time.phase        → day / sunset / night
 state.inventoryStats.freeSlots → < 3 = nearly full
 state.nearbyEntities    → check for hostiles (type="hostile")
 state.notableBlocks     → chests, ores, workstations nearby
 state.currentAction     → null = idle, non-null = busy
+state.players           → who's online (full server, not just nearby)
+state.vehicle           → null = on foot, non-null = mounted
+state.pathfinding       → isMoving, distanceToGoal
 state.latestEventId     → highest event ID right now
 state.lastAckedEventId  → last ID you acked (null if never)
 ```

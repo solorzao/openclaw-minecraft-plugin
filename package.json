@@ -1,10 +1,11 @@
 {
   "name": "openclaw-minecraft-plugin",
-  "version": "3.1.0",
-  "description": "Full-featured AI-controlled Minecraft bot for OpenClaw - autonomous survival, crafting, mining, combat, and more",
-  "main": "bot.js",
+  "version": "4.0.0",
+  "description": "Headless Minecraft bot body for OpenClaw agents - file-based IPC for commands, state, and events",
+  "main": "src/index.js",
   "scripts": {
-    "start": "node bot.js",
+    "start": "node src/index.js",
+    "start:legacy": "node bot.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -27,6 +28,7 @@
   },
   "homepage": "https://github.com/solorzao/openclaw-minecraft-plugin#readme",
   "dependencies": {
+    "minecraft-data": "^3.69.0",
     "mineflayer": "^4.20.1",
     "mineflayer-pathfinder": "^2.4.4",
     "vec3": "^0.1.8"

@@ -386,7 +386,7 @@
         "if": { "properties": { "action": { "const": "goal" } } },
         "then": {
           "properties": {
-            "goal": { "type": "string", "enum": ["gather_wood", "explore"] }
+            "goal": { "type": "string", "description": "Goal text. Built-in goals 'gather_wood' and 'explore' also trigger pathfinding. Any other string is tracked as a freeform objective. Use 'none' or 'clear' to clear." }
           },
           "required": ["action", "goal"]
         }

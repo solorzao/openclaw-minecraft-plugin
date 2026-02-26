@@ -81,38 +81,7 @@ const DISPATCH = {
   set_note:            utility.setNote,
   get_notes:           utility.getNotes,
   ack_events:          utility.ackEvents,
-
-  // Goal shortcuts
-  goal: async (bot, cmd) => {
-    const { GoalBlock, GoalXZ, GoalNear } = require('mineflayer-pathfinder').goals;
-    const { setCurrentAction } = require('./state');
-
-    switch (cmd.goal) {
-      case 'gather_wood': {
-        const log = bot.findBlock({ matching: b => b.name.includes('log'), maxDistance: 64 });
-        if (log) {
-          setCurrentAction({ type: 'goal', goal: 'gather_wood' });
-          bot.pathfinder.setGoal(new GoalNear(log.position.x, log.position.y, log.position.z, 1));
-          logEvent('command_result', { commandId: cmd.id, success: true, detail: 'Gathering wood' });
-        } else {
-          logEvent('command_result', { commandId: cmd.id, success: false, detail: 'No trees nearby' });
-        }
-        break;
-      }
-      case 'explore': {
-        const angle = Math.random() * Math.PI * 2;
-        const dist = 30 + Math.random() * 40;
-        const x = Math.floor(bot.entity.position.x + Math.cos(angle) * dist);
-        const z = Math.floor(bot.entity.position.z + Math.sin(angle) * dist);
-        setCurrentAction({ type: 'goal', goal: 'explore' });
-        bot.pathfinder.setGoal(new GoalXZ(x, z));
-        logEvent('command_result', { commandId: cmd.id, success: true, detail: `Exploring toward ${x}, ${z}` });
-        break;
-      }
-      default:
-        logEvent('command_result', { commandId: cmd.id, success: false, detail: `Unknown goal: ${cmd.goal}` });
-    }
-  },
+  goal:                utility.setGoal,
 };
 
 async function executeCommand(bot, cmd) {

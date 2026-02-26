@@ -591,4 +591,74 @@ async function ackEvents(bot, cmd) {
   logEvent('command_result', { commandId: cmd.id, success: true, detail: `Acknowledged events up to ${eventId}` });
 }
 
-module.exports = { scan, findBlocks, whereAmI, listRecipes: listRecipesDetailed, gotoNearestBlock, verify, cancel, inspectContainer, setNote, getNotes, ackEvents, loadAck };
+// Goal persistence - tracks agent's current objective across restarts
+const GOAL_FILE = path.join(DATA_DIR, 'goal.json');
+
+function loadGoal() {
+  try {
+    if (fs.existsSync(GOAL_FILE)) return JSON.parse(fs.readFileSync(GOAL_FILE, 'utf8'));
+  } catch (e) {}
+  return null;
+}
+
+function saveGoal(goal) {
+  try {
+    if (goal === null) {
+      if (fs.existsSync(GOAL_FILE)) fs.unlinkSync(GOAL_FILE);
+    } else {
+      fs.writeFileSync(GOAL_FILE, JSON.stringify(goal, null, 2));
+    }
+  } catch (e) {}
+}
+
+async function setGoal(bot, cmd) {
+  const goalText = cmd.goal;
+  if (!goalText || goalText === 'none' || goalText === 'clear') {
+    saveGoal(null);
+    logEvent('command_result', { commandId: cmd.id, success: true, detail: 'Goal cleared' });
+    return;
+  }
+
+  const goal = {
+    goal: goalText,
+    setAt: new Date().toISOString(),
+    positionWhenSet: {
+      x: Math.floor(bot.entity.position.x),
+      y: Math.floor(bot.entity.position.y),
+      z: Math.floor(bot.entity.position.z),
+    },
+  };
+  saveGoal(goal);
+
+  // Built-in goal behaviors
+  const { GoalNear, GoalXZ } = require('mineflayer-pathfinder').goals;
+
+  switch (goalText) {
+    case 'gather_wood': {
+      const log = bot.findBlock({ matching: b => b.name.includes('log'), maxDistance: 64 });
+      if (log) {
+        setCurrentAction({ type: 'goal', goal: 'gather_wood' });
+        bot.pathfinder.setGoal(new GoalNear(log.position.x, log.position.y, log.position.z, 1));
+        logEvent('command_result', { commandId: cmd.id, success: true, detail: 'Goal set: gather_wood (heading to nearest tree)' });
+      } else {
+        logEvent('command_result', { commandId: cmd.id, success: true, detail: 'Goal set: gather_wood (no trees nearby - explore first)' });
+      }
+      break;
+    }
+    case 'explore': {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 30 + Math.random() * 40;
+      const x = Math.floor(bot.entity.position.x + Math.cos(angle) * dist);
+      const z = Math.floor(bot.entity.position.z + Math.sin(angle) * dist);
+      setCurrentAction({ type: 'goal', goal: 'explore' });
+      bot.pathfinder.setGoal(new GoalXZ(x, z));
+      logEvent('command_result', { commandId: cmd.id, success: true, detail: `Goal set: explore (heading toward ${x}, ${z})` });
+      break;
+    }
+    default:
+      // Freeform goal - just persist it, no built-in behavior
+      logEvent('command_result', { commandId: cmd.id, success: true, detail: `Goal set: ${goalText}` });
+  }
+}
+
+module.exports = { scan, findBlocks, whereAmI, listRecipes: listRecipesDetailed, gotoNearestBlock, verify, cancel, inspectContainer, setNote, getNotes, ackEvents, loadAck, setGoal, loadGoal };

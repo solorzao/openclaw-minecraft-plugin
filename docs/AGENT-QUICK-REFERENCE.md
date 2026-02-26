@@ -110,6 +110,7 @@ Check `state.json` every 1-2 seconds. Act on the **first** matching condition:
 | `verify` | `{"action":"verify","check":"craft","item":"iron_pickaxe"}` | **Check feasibility before acting** |
 | `cancel` | `{"action":"cancel"}` | Cancel current running action |
 | `inspect_container` | `{"action":"inspect_container"}` | Look inside nearest chest |
+| `goal` | `{"action":"goal","goal":"mine iron ore"}` | **Set persistent objective (survives restarts)** |
 | `set_note` | `{"action":"set_note","key":"base","value":"100 64 -50"}` | Save persistent note |
 | `get_notes` | `{"action":"get_notes"}` | Retrieve all saved notes |
 | `ack_events` | `{"action":"ack_events","eventId":150}` | **Mark events as processed (survives restarts)** |
@@ -118,10 +119,35 @@ Check `state.json` every 1-2 seconds. Act on the **first** matching condition:
 
 1. **Verify before acting**: Use `verify` before `craft`/`smelt`/`mine` to check feasibility and see what's missing
 2. **Track events with ack_events**: On startup, read `lastAckedEventId` from `state.json` and only process events with `id` above that. After processing, send `ack_events` with the highest ID. **This prevents duplicate responses on restart.**
-3. **Check state.survival**: Before issuing movement, check if bot is fleeing or stuck
-4. **Use cancel**: If you need to change plans mid-action, cancel first
-5. **Save notes**: Use `set_note` to remember base location, goals, and progress across sessions
-6. **Read structured results**: `command_result` events now include rich data (missing materials, items gained, trade lists, etc.)
+3. **Set a goal**: Use `goal` to persist your current objective. It appears in `state.json` as `currentGoal` so you remember what you're working toward across cycles.
+4. **Use notes for memory**: Use `set_note` to remember base locations, plans, conversation context, and progress. Notes appear in `state.json` every cycle.
+5. **Check state.survival**: Before issuing movement, check if bot is fleeing or stuck
+6. **Use cancel**: If you need to change plans mid-action, cancel first
+7. **Read structured results**: `command_result` events now include rich data (missing materials, items gained, trade lists, etc.)
+
+### Maintaining Context Across Decision Cycles
+
+Your brain loses memory between cycles. Use these to maintain continuity:
+
+```
+Each cycle:
+1. Read state.json → check currentGoal and notes for context
+2. Read events.json → only process events with id > lastAckedEventId
+3. React to urgent events (chat, danger)
+4. Advance your goal (check plan in notes, do next step)
+5. Update notes (save progress, update plan)
+6. ack_events with highest processed event ID
+7. Wait 3-5 seconds
+```
+
+**Recommended note keys:**
+
+| Key | Purpose | Example |
+|-----|---------|---------|
+| `plan` | Step-by-step plan | `"1. Get logs 2. Craft planks 3. Craft pickaxe"` |
+| `base_location` | Home coordinates | `"-19 72 -139 (crafting table here)"` |
+| `conversation` | Recent chat context | `"Wookiee asked me to mine iron"` |
+| `discoveries` | Found resources/structures | `"Iron ore at -15 60 -130, village at 100 64 200"` |
 
 ### Resource Names for mine_resource
 

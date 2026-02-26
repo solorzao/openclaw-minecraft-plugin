@@ -80,6 +80,11 @@ Written every second to `data/state.json`. This is the primary way to observe th
     "phase": "day"
   },
   "currentAction": null,
+  "currentGoal": {
+    "goal": "mine iron and craft iron tools",
+    "setAt": "2026-02-25T19:00:00.000Z",
+    "positionWhenSet": { "x": -27, "y": 67, "z": -139 }
+  },
   "pathfinding": {
     "active": true,
     "goalX": -50,
@@ -134,6 +139,7 @@ Written every second to `data/state.json`. This is the primary way to observe th
 | `time.timeOfDay` | Game ticks (0-24000) |
 | `time.phase` | `day`, `sunset`, or `night` |
 | `currentAction` | Current action with progress info (e.g. `{type: "mining", mined: 5, count: 16, progress: "5/16"}`) |
+| `currentGoal` | Agent's persisted objective: `goal` (text), `setAt` (timestamp), `positionWhenSet`. Null if no goal set. Set via `goal` command |
 | `pathfinding` | Current pathfinding status: `active`, goal coordinates, `distanceToGoal`. Null if idle |
 | `survival` | Survival system state: `isFleeing`, `isEscapingWater`, `isStuck`, `nearestThreat`, `fleeInfo` |
 | `combat` | Active combat info: `target`, `targetHealth`, `hitsDealt`, `damageTaken`, `elapsed`. Null if not fighting |
@@ -522,11 +528,14 @@ Tells the bot "I have processed all events up to this ID." The bot saves this to
 
 ### Goals
 
-#### `goal` - High-level goal shortcuts
+#### `goal` - Set persistent objective (survives restarts)
 ```json
+{ "action": "goal", "goal": "mine iron and craft iron tools" }
 { "action": "goal", "goal": "gather_wood" }
+{ "action": "goal", "goal": "explore" }
+{ "action": "goal", "goal": "clear" }
 ```
-Goals: `gather_wood`, `explore`
+Any string sets a persistent objective that appears in `state.json` as `currentGoal`. Built-in goals `gather_wood` and `explore` also trigger pathfinding behavior. Use `"clear"` or `"none"` to clear the goal.
 
 ---
 

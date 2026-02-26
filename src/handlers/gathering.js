@@ -85,7 +85,13 @@ async function dig(bot, cmd) {
     if (bestTool) await bot.equip(bestTool, 'hand');
 
     setCurrentAction({ type: 'dig', blockType: block.name });
+    const blockPos = block.position.clone();
     await bot.dig(block);
+    // Walk over the drop to auto-collect it
+    try {
+      await bot.pathfinder.goto(new GoalNear(blockPos.x, blockPos.y, blockPos.z, 0));
+    } catch (e) {} // Best effort - don't fail if we can't reach the exact spot
+    await new Promise(r => setTimeout(r, 300)); // Brief pause to pick up item
     logEvent('command_result', { commandId: cmd.id, success: true, detail: `Broke ${block.name}${bestTool ? ' with ' + bestTool.name : ''}` });
     clearCurrentAction();
   } catch (err) {
@@ -160,8 +166,14 @@ async function mineResource(bot, cmd) {
         }
       }
 
+      const blockPos = block.position.clone();
       await bot.dig(block);
       mined++;
+      // Walk over the drop to auto-collect it
+      try {
+        await bot.pathfinder.goto(new GoalNear(blockPos.x, blockPos.y, blockPos.z, 0));
+      } catch (e) {}
+      await new Promise(r => setTimeout(r, 200));
       logEvent('block_mined', { block: block.name, mined, target: count, elapsed: Math.floor((Date.now() - miningStart) / 1000) });
 
       if (mined % 8 === 0) {

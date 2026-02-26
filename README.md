@@ -113,6 +113,8 @@ Key fields to check every cycle:
 | `nearbyBlocks` | Block type counts in a 17x9x17 area |
 | `notableBlocks` | Chests, ores, workstations with positions |
 | `currentAction` | What the bot is doing right now (null = idle) |
+| `currentGoal` | Your persisted objective (null if none set) |
+| `notes` | Your persisted key-value memory |
 | `survival.isFleeing` | Bot is running from a threat |
 | `latestEventId` | Highest event ID in events.json right now |
 | `lastAckedEventId` | Last event ID you acknowledged (null if never acked) |
@@ -186,6 +188,75 @@ When reading `state.json`, act on the **first** matching condition:
 This is a suggested skeleton. Adapt it to your goals.
 
 For error recovery patterns, complete workflow examples, and a detailed decision flowchart, read [docs/AGENT-QUICK-REFERENCE.md](docs/AGENT-QUICK-REFERENCE.md).
+
+---
+
+## Maintaining Context Across Cycles
+
+Your brain runs in a loop. Between cycles, you lose memory. Use these tools to maintain continuity.
+
+### Goals
+
+Set your current objective so it persists across restarts:
+
+```json
+[{"id": "g-1", "action": "goal", "goal": "mine iron and craft iron tools"}]
+```
+
+The goal appears in `state.json` as `currentGoal`:
+
+```json
+{
+  "currentGoal": {
+    "goal": "mine iron and craft iron tools",
+    "setAt": "2025-01-15T10:30:00Z",
+    "positionWhenSet": {"x": -19, "y": 72, "z": -139}
+  }
+}
+```
+
+Built-in goals `gather_wood` and `explore` also trigger pathfinding. Any other string is tracked as a freeform objective. Clear with:
+
+```json
+[{"id": "g-2", "action": "goal", "goal": "clear"}]
+```
+
+### Notes (Persistent Memory)
+
+Store anything you need to remember:
+
+```json
+[
+  {"id": "n-1", "action": "set_note", "key": "base_location", "value": "-19 72 -139 (crafting table)"},
+  {"id": "n-2", "action": "set_note", "key": "plan", "value": "1. Get 4 logs 2. Craft planks 3. Craft pickaxe"},
+  {"id": "n-3", "action": "set_note", "key": "conversation", "value": "Wookiee asked me to help mine iron"}
+]
+```
+
+Notes appear in `state.json` under the `notes` field every cycle. They persist across bot and agent restarts.
+
+### Recommended Note Keys
+
+| Key | Purpose |
+|-----|---------|
+| `plan` | Current step-by-step plan |
+| `base_location` | Coordinates of home/stash |
+| `conversation` | Summary of recent chat context |
+| `discoveries` | Resources, structures, locations found |
+| `inventory_goal` | Items you're trying to collect |
+
+### The Full Decision Cycle
+
+Each iteration of your loop should:
+
+1. **Read `state.json`** — check health, food, position, `currentGoal`, `notes`, `currentAction`
+2. **Read `events.json`** — check for new events (id > `lastAckedEventId`)
+3. **React to urgent events** — respond to chat, handle danger
+4. **Check decision priority** — health, combat, hunger, night, busy, idle
+5. **Advance your goal** — take the next step in your plan
+6. **Update notes** — save progress, update plan, log discoveries
+7. **Acknowledge events** — `ack_events` with highest processed event ID
+8. **Wait** — 3-5 seconds for commands to execute before next cycle
 
 ---
 

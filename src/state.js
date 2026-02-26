@@ -15,11 +15,13 @@ const NOTES_FILE = path.join(DATA_DIR, 'notes.json');
 let _getSurvivalState = null;
 let _getCombatState = null;
 let _loadAck = null;
+let _loadGoal = null;
 function lazyLoadModules() {
   if (!_getSurvivalState) {
     _getSurvivalState = require('./survival').getSurvivalState;
     _getCombatState = require('./handlers/combat').getCombatState;
     _loadAck = require('./handlers/utility').loadAck;
+    _loadGoal = require('./handlers/utility').loadGoal;
   }
 }
 
@@ -148,6 +150,7 @@ function buildState(bot) {
       phase: getTimePhase(bot),
     },
     currentAction,
+    currentGoal: _loadGoal ? _loadGoal() : null,
     pathfinding,
     survival: survivalState,
     combat: combatInfo,

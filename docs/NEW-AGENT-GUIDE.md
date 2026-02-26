@@ -198,6 +198,7 @@ Check logs: `tail -20 bot-output.log`. Common causes:
 
 ## Next Steps
 
-1. Read the [Interface docs](INTERFACE.md) for full command reference
-2. Try the [example controller](../examples/basic-controller.js)
-3. See [Deployment guide](DEPLOYMENT.md) for OpenClaw integration patterns
+1. **Start here:** Read the [Agent Quick Reference](AGENT-QUICK-REFERENCE.md) — decision flowchart, error recovery, complete workflow examples
+2. Read the [Interface docs](INTERFACE.md) for full command and state reference
+3. Try the [survival loop example](../examples/workflows/survival-loop.js) or [mine-and-craft workflow](../examples/workflows/mine-and-craft.js)
+4. See [Deployment guide](DEPLOYMENT.md) for OpenClaw integration patterns
